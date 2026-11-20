@@ -1,34 +1,34 @@
-# Pharmacy Upgrade — Foundation
+# Pharmacy Upgrade
 
-This directory is an isolated workspace for non-operational CI4 foundation work.
+Workspace terisolasi untuk menyiapkan upgrade kode berdasarkan skema database terbaru `cakra_pharmacy`.
 
-## Repository baseline
+## Prinsip kerja
 
-- Framework: CodeIgniter 4.7.5.
-- Authentication and authorization: CodeIgniter Shield in the main application.
-- Existing module namespace: `Modules\\Pharmacy`.
-- Existing module model base: `Modules\\Pharmacy\\Models\\PharmacyModel`.
-- The existing Pharmacy module has its own dynamic route entry point in `modules/Pharmacy/Config/Routes.php`.
-- The existing Pharmacy code and database are treated as read-only references for this upgrade workspace.
+- Kode lama di `modules/Pharmacy` hanya menjadi referensi; tidak diubah.
+- Semua file upgrade berada di `modules/Pharmacy-Upgrade`.
+- Skema database terbaru menjadi acuan; tidak membuat atau menjalankan migrasi.
+- Tidak mengubah Dynamic Routes, autentikasi Shield, atau fondasi CI4.
+- Pola kode lama dipertahankan sejauh masih sesuai dengan skema baru.
+- Perubahan harus dicatat pada `REPLACEMENT-MAP.md`.
 
-## Scope of this workspace
+## Struktur
 
-Allowed foundation topics:
+- `Models/` — model non-operasional yang aman dan diperlukan oleh komponen referensi.
+- `Services/` — layanan umum/non-operasional.
+- `Controllers/` — endpoint non-operasional yang aman.
+- `Validation/` — aturan validasi umum.
+- `Config/` — konfigurasi modul bila memang diperlukan.
+- `Views/` — tampilan non-operasional.
+- `REPLACEMENT-MAP.md` — peta file lama, status, dan target penggantinya.
 
-- Module organization and namespace conventions.
-- CI4 bootstrap and configuration patterns.
-- Shared authentication integration and authorization boundaries.
-- Generic API request/response conventions.
-- Generic validation and exception handling.
-- Logging, environment configuration, and application-level diagnostics.
-- Automated tests for the foundation itself.
+## Batas implementasi
 
-This workspace does not implement or modify medication procurement, inventory, sales, dispensing, delivery, or distribution workflows.
+Workspace ini tidak digunakan untuk membuat atau mengubah alur operasional pengadaan, penerimaan, pengelolaan stok, penjualan, pembayaran transaksi, retur, penyerahan, maupun distribusi obat. Bagian tersebut dicatat pada replacement map agar statusnya transparan, bukan dianggap sudah dikerjakan.
 
-## Change policy
+## Aturan perubahan
 
-1. Keep all work in `modules/Pharmacy-Upgrade`.
-2. Do not modify files under `modules/Pharmacy`.
-3. Do not add or run database migrations from this workspace.
-4. Do not assume configuration paths or APIs; verify them against the repository before implementation.
-5. Keep authentication and authorization integrated with the existing main application rather than creating a second identity store.
+1. Jangan mengubah file di luar `modules/Pharmacy-Upgrade`.
+2. Jangan menyalin implementasi lama secara otomatis; periksa kesesuaian skema terlebih dahulu.
+3. Jangan mengasumsikan kolom, relasi, atau konfigurasi yang belum diverifikasi.
+4. Pertahankan integrasi autentikasi aplikasi utama.
+5. Catat setiap file yang dibuat atau diganti beserta statusnya di replacement map.
