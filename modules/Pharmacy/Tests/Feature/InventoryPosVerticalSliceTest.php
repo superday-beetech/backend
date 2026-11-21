@@ -257,13 +257,13 @@ final class InventoryPosVerticalSliceTest extends CIUnitTestCase
                 'product_id' => $this->productId,
                 'quantity' => 3,
                 'unit_price' => 100,
-                'discount_amount' => 0,
+                'discount_amount' => 30,
             ]],
         ], [
             'settlement_mode' => 'paid',
-            'amount' => 300,
-            'applied_amount' => 300,
-            'amount_received' => 300,
+            'amount' => 270,
+            'applied_amount' => 270,
+            'amount_received' => 270,
             'change_amount' => 0,
             'payment_method' => 'cash',
         ], $this->userId, 'vs-pos-return-key');
@@ -287,6 +287,8 @@ final class InventoryPosVerticalSliceTest extends CIUnitTestCase
 
         $result = $returns->postSalesReturn($returnId, $this->userId);
         $this->assertSame('posted', $result['status']);
+        $this->assertSame(180.0, (float) $this->db->table('sales_returns')
+            ->where('id', $returnId)->get()->getRowArray()['total_amount']);
         $this->assertSame(2.0, (float) $result['restocked_quantity']);
 
         $balance = (float) $this->db->table('product_batches')
