@@ -161,7 +161,7 @@ final class InventoryPosVerticalSliceTest extends CIUnitTestCase
         $this->assertNotEmpty($batch);
         $this->assertSame('10.000', number_format((float) $batch['quantity_remaining'], 3, '.', ''));
         $this->assertSame('posted', $this->db->table('goods_receipts')
-            ->where('id', $this->receiptId)->get()->getRow('status'));
+            ->where('id', $this->receiptId)->get()->getRowArray()['status']);
 
         $this->expectException(RuntimeException::class);
         $service->postGoodsReceipt($this->receiptId, [
