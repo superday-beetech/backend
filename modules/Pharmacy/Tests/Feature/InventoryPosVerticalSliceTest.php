@@ -162,6 +162,10 @@ final class InventoryPosVerticalSliceTest extends CIUnitTestCase
         $this->assertSame('10.000', number_format((float) $batch['quantity_remaining'], 3, '.', ''));
         $this->assertSame('posted', $this->db->table('goods_receipts')
             ->where('id', $this->receiptId)->get()->getRowArray()['status']);
+        $this->assertSame(1, $this->db->table('stock_movements')
+            ->where('reference_type', 'goods_receipt')
+            ->where('reference_id', $this->receiptId)
+            ->countAllResults());
 
         $this->expectException(RuntimeException::class);
         $service->postGoodsReceipt($this->receiptId, [
@@ -290,6 +294,10 @@ final class InventoryPosVerticalSliceTest extends CIUnitTestCase
             ->selectSum('quantity_remaining', 'balance')
             ->get()->getRow()->balance;
         $this->assertSame(9.0, $balance);
+        $this->assertSame(1, $this->db->table('stock_movements')
+            ->where('reference_type', 'pos_sales_return')
+            ->where('reference_id', $returnId)
+            ->countAllResults());
 
         $this->expectException(RuntimeException::class);
         $returns->postSalesReturn($returnId, $this->userId);
