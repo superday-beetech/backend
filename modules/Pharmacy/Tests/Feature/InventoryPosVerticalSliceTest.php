@@ -301,6 +301,36 @@ final class InventoryPosVerticalSliceTest extends CIUnitTestCase
             ->where('reference_id', $returnId)
             ->countAllResults());
 
+        $this->assertSame(1, $this->db->table('stock_movements')
+            ->where('reference_type', 'pos_sales_return')
+            ->where('reference_id', $returnId)
+            ->countAllResults());
+
+        $secondReturnId = $returns->createSalesReturn([
+            'return_number' => 'VS-POS-RET-' . strtoupper(bin2hex(random_bytes(3))),
+            'sale_id' => $saleId,
+            'return_date' => date('Y-m-d'),
+            'items' => [[
+                'sale_item_id' => (int) $saleItem['id'],
+                'quantity' => 1,
+                'restockable' => false,
+                'condition_notes' => 'Tidak layak dijual kembali',
+            ]],
+        ], $this->userId);
+
+        $secondResult = $returns->postSalesReturn($secondReturnId, $this->userId);
+        $this->assertSame(0.0, (float) $secondResult['restocked_quantity']);
+        $this->assertSame(90.0, (float) $this->db->table('sales_returns')
+            ->where('id', $secondReturnId)->get()->getRowArray()['total_amount']);
+        $this->assertSame(9.0, (float) $this->db->table('product_batches')
+            ->where('product_id', $this->productId)
+            ->selectSum('quantity_remaining', 'balance')
+            ->get()->getRow()->balance);
+        $this->assertSame(0, $this->db->table('stock_movements')
+            ->where('reference_type', 'pos_sales_return')
+            ->where('reference_id', $secondReturnId)
+            ->countAllResults());
+
         $this->expectException(RuntimeException::class);
         $returns->postSalesReturn($returnId, $this->userId);
     }
