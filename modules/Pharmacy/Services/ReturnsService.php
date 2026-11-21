@@ -982,15 +982,19 @@ $return = $this->db
             }
 
             $previous = $this->db->query(
-                'SELECT COALESCE(SUM(sri.quantity), 0) AS total
+                'SELECT
+                    COALESCE(SUM(sri.quantity), 0) AS total_quantity,
+                    COALESCE(SUM(sri.subtotal), 0) AS total_subtotal
                  FROM sales_return_items sri
                  INNER JOIN sales_returns sr ON sr.id = sri.sales_return_id
                  WHERE sri.sale_item_id = ? AND sr.status = ?',
                 [$saleItemId, 'posted']
             )->getRowArray();
 
-            $alreadyReturned = (float) ($previous['total'] ?? 0);
-            if ($alreadyReturned + (float) $rawQuantity > (float) $saleItem['quantity'] + 0.0001) {
+            $alreadyReturned = (float) ($previous['total_quantity'] ?? 0);
+            $alreadyReturnedSubtotal = (float) ($previous['total_subtotal'] ?? 0);
+            $soldQuantity = (float) $saleItem['quantity'];
+            if ($alreadyReturned + (float) $rawQuantity > $soldQuantity + 0.0001) {
                 throw new RuntimeException('Jumlah retur melebihi jumlah item POS yang terjual.');
             }
 
@@ -1009,14 +1013,20 @@ $return = $this->db
             }
 
             $quantity = round((float) $rawQuantity, 3);
-            $unitPrice = (float) $saleItem['unit_price'];
+            $soldSubtotal = (float) $saleItem['subtotal'];
+            $cumulativeSubtotal = round(
+                $soldSubtotal * (($alreadyReturned + $quantity) / $soldQuantity),
+                2
+            );
+            $subtotal = round($cumulativeSubtotal - $alreadyReturnedSubtotal, 2);
+            $unitPrice = $quantity > 0 ? round($subtotal / $quantity, 2) : 0.0;
             $prepared[] = [
                 'sale_item_id' => $saleItemId,
                 'delivery_item_id' => null,
                 'batch_id' => (int) $saleItem['batch_id'],
                 'quantity' => $quantity,
                 'unit_price' => $unitPrice,
-                'subtotal' => round($quantity * $unitPrice, 2),
+                'subtotal' => $subtotal,
                 'restockable' => $restockable,
                 'condition_notes' => $conditionNotes !== null && trim($conditionNotes) !== ''
                     ? trim($conditionNotes)
@@ -1042,6 +1052,7 @@ $return = $this->db
         }
 
         $restockedQuantity = 0.0;
+        $returnTotalAmount = 0.0;
         foreach ($items as $item) {
             $saleItemId = (int) $item['sale_item_id'];
             $batchId = (int) $item['batch_id'];
@@ -1056,17 +1067,40 @@ $return = $this->db
             }
 
             $previous = $this->db->query(
-                'SELECT COALESCE(SUM(sri.quantity), 0) AS total
+                'SELECT
+                    COALESCE(SUM(sri.quantity), 0) AS total_quantity,
+                    COALESCE(SUM(sri.subtotal), 0) AS total_subtotal
                  FROM sales_return_items sri
                  INNER JOIN sales_returns sr ON sr.id = sri.sales_return_id
                  WHERE sri.sale_item_id = ? AND sr.status = ? AND sr.id != ?',
                 [$saleItemId, 'posted', (int) $return['id']]
             )->getRowArray();
 
-            $alreadyReturned = (float) ($previous['total'] ?? 0);
-            if ($alreadyReturned + $quantity > (float) $saleItem['quantity'] + 0.0001) {
+            $alreadyReturned = (float) ($previous['total_quantity'] ?? 0);
+            $alreadyReturnedSubtotal = (float) ($previous['total_subtotal'] ?? 0);
+            $soldQuantity = (float) $saleItem['quantity'];
+            if ($alreadyReturned + $quantity > $soldQuantity + 0.0001) {
                 throw new RuntimeException('Jumlah retur melebihi sisa kuantitas item POS.');
             }
+
+            $cumulativeSubtotal = round(
+                (float) $saleItem['subtotal'] * (($alreadyReturned + $quantity) / $soldQuantity),
+                2
+            );
+            $returnSubtotal = round($cumulativeSubtotal - $alreadyReturnedSubtotal, 2);
+            $returnUnitPrice = $quantity > 0 ? round($returnSubtotal / $quantity, 2) : 0.0;
+
+            $updatedItem = $this->db->table('sales_return_items')
+                ->where('id', (int) $item['id'])
+                ->where('sales_return_id', (int) $return['id'])
+                ->update([
+                    'unit_price' => $returnUnitPrice,
+                    'subtotal' => $returnSubtotal,
+                ]);
+            if (!$updatedItem) {
+                throw new RuntimeException('Gagal memperbarui nilai item retur POS.');
+            }
+            $returnTotalAmount += $returnSubtotal;
 
             $batch = $this->db->query(
                 'SELECT * FROM product_batches WHERE id = ? FOR UPDATE',
@@ -1116,6 +1150,7 @@ $return = $this->db
             ->where('status', 'draft')
             ->update([
                 'status' => 'posted',
+                'total_amount' => $returnTotalAmount,
                 'updated_by' => $userId,
                 'updated_at' => date('Y-m-d H:i:s'),
             ]);
