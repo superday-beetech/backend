@@ -717,9 +717,11 @@ class ReturnsService
      */
     public function getSalesReturnDetail(int $returnId): array
     {
-        $return = $this->db
-            ->table('sales_returns')
-            ->where('id', $returnId)
+$return = $this->db
+            ->table('sales_returns sr')
+            ->select('sr.*, s.sale_number')
+            ->join('sales s', 's.id = sr.sale_id', 'left')
+            ->where('sr.id', $returnId)
             ->get()
             ->getRowArray();
 
