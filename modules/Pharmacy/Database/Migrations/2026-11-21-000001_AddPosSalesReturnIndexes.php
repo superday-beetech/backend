@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Modules\\Pharmacy\\Database\\Migrations;
+namespace Modules\Pharmacy\Database\Migrations;
 
-use CodeIgniter\\Database\\Migration;
+use CodeIgniter\Database\Migration;
 
 class AddPosSalesReturnIndexes extends Migration
 {
