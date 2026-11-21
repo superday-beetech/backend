@@ -420,6 +420,10 @@ class ReturnsService
         array $data,
         int $userId
     ): int {
+        if (!empty($data['sale_id'])) {
+            return $this->createPosSalesReturn($data, $userId);
+        }
+
         $this->validateHeader($data, [
             'return_number',
             'delivery_id',
@@ -523,6 +527,10 @@ class ReturnsService
 
             if (!$items) {
                 throw new RuntimeException('Detail retur penjualan kosong.');
+            }
+
+            if (!empty($return['sale_id'])) {
+                return $this->postPosSalesReturnInTransaction($return, $items, $userId);
             }
 
             $restockedQuantity = 0.0;
@@ -848,6 +856,256 @@ class ReturnsService
         }
 
         return $prepared;
+    }
+
+    /**
+     * Membuat draft retur dari transaksi POS.
+     * Items memakai sale_item_id dari alokasi batch penjualan.
+     */
+    private function createPosSalesReturn(array $data, int $userId): int
+    {
+        $this->validateHeader($data, ['return_number', 'sale_id', 'return_date', 'items']);
+        if ($userId < 1) {
+            throw new RuntimeException('User tidak valid.');
+        }
+
+        $this->db->transBegin();
+        try {
+            $saleId = (int) $data['sale_id'];
+            $sale = $this->db->query(
+                'SELECT * FROM sales WHERE id = ? FOR UPDATE',
+                [$saleId]
+            )->getRowArray();
+
+            if (!$sale || $sale['status'] !== 'posted') {
+                throw new RuntimeException('Transaksi POS tidak ditemukan atau belum diposting.');
+            }
+
+            $items = $this->preparePosSalesReturnItems($saleId, $data['items']);
+            $totalAmount = round(array_sum(array_column($items, 'subtotal')), 2);
+            $now = date('Y-m-d H:i:s');
+
+            $inserted = $this->db->table('sales_returns')->insert([
+                'return_number' => trim((string) $data['return_number']),
+                'customer_id' => $sale['customer_id'] ?: null,
+                'sale_id' => $saleId,
+                'delivery_id' => null,
+                'return_date' => $data['return_date'],
+                'status' => 'draft',
+                'reason' => $data['reason'] ?? null,
+                'total_amount' => $totalAmount,
+                'notes' => $data['notes'] ?? null,
+                'created_by' => $userId,
+                'updated_by' => $userId,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            if (!$inserted) {
+                throw new RuntimeException('Gagal membuat draft retur POS.');
+            }
+
+            $returnId = (int) $this->db->insertID();
+            foreach ($items as $item) {
+                $item['sales_return_id'] = $returnId;
+                $item['created_at'] = $now;
+                $item['updated_at'] = $now;
+                if (!$this->db->table('sales_return_items')->insert($item)) {
+                    throw new RuntimeException('Gagal menyimpan item retur POS.');
+                }
+            }
+
+            $this->completeTransaction();
+            return $returnId;
+        } catch (Throwable $e) {
+            $this->db->transRollback();
+            throw $e;
+        }
+    }
+
+    /**
+     * Validasi item retur terhadap sale_items yang sudah dialokasikan per batch.
+     */
+    private function preparePosSalesReturnItems(int $saleId, array $items): array
+    {
+        if ($saleId <= 0 || $items === []) {
+            throw new RuntimeException('Detail retur POS wajib diisi.');
+        }
+
+        $prepared = [];
+        $seen = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                throw new RuntimeException('Format item retur POS tidak valid.');
+            }
+
+            $saleItemId = (int) ($item['sale_item_id'] ?? 0);
+            $rawQuantity = $item['quantity'] ?? null;
+            if ($saleItemId <= 0 || !is_numeric($rawQuantity) || is_bool($rawQuantity)
+                || !is_finite((float) $rawQuantity) || (float) $rawQuantity <= 0) {
+                throw new RuntimeException('Item atau kuantitas retur POS tidak valid.');
+            }
+            if (isset($seen[$saleItemId])) {
+                throw new RuntimeException('Item penjualan tidak boleh berulang dalam satu retur.');
+            }
+            $seen[$saleItemId] = true;
+
+            $saleItem = $this->db->query(
+                'SELECT * FROM sale_items WHERE id = ? AND sale_id = ? FOR UPDATE',
+                [$saleItemId, $saleId]
+            )->getRowArray();
+            if (!$saleItem || (int) $saleItem['batch_id'] <= 0) {
+                throw new RuntimeException('Item POS tidak ditemukan atau belum memiliki alokasi batch.');
+            }
+
+            $previous = $this->db->query(
+                'SELECT COALESCE(SUM(sri.quantity), 0) AS total
+                 FROM sales_return_items sri
+                 INNER JOIN sales_returns sr ON sr.id = sri.sales_return_id
+                 WHERE sri.sale_item_id = ? AND sr.status = ?',
+                [$saleItemId, 'posted']
+            )->getRowArray();
+
+            $alreadyReturned = (float) ($previous['total'] ?? 0);
+            if ($alreadyReturned + (float) $rawQuantity > (float) $saleItem['quantity'] + 0.0001) {
+                throw new RuntimeException('Jumlah retur melebihi jumlah item POS yang terjual.');
+            }
+
+            $rawRestockable = $item['restockable'] ?? false;
+            if (in_array($rawRestockable, [true, 1, '1'], true)) {
+                $restockable = 1;
+            } elseif (in_array($rawRestockable, [false, 0, '0'], true)) {
+                $restockable = 0;
+            } else {
+                throw new RuntimeException('Status restock barang tidak valid.');
+            }
+
+            $conditionNotes = $item['condition_notes'] ?? null;
+            if ($conditionNotes !== null && !is_string($conditionNotes)) {
+                throw new RuntimeException('Catatan kondisi barang tidak valid.');
+            }
+
+            $quantity = round((float) $rawQuantity, 3);
+            $unitPrice = (float) $saleItem['unit_price'];
+            $prepared[] = [
+                'sale_item_id' => $saleItemId,
+                'delivery_item_id' => null,
+                'batch_id' => (int) $saleItem['batch_id'],
+                'quantity' => $quantity,
+                'unit_price' => $unitPrice,
+                'subtotal' => round($quantity * $unitPrice, 2),
+                'restockable' => $restockable,
+                'condition_notes' => $conditionNotes !== null && trim($conditionNotes) !== ''
+                    ? trim($conditionNotes)
+                    : null,
+            ];
+        }
+
+        return $prepared;
+    }
+
+    /**
+     * Posting retur POS dalam transaksi yang sudah dibuka oleh postSalesReturn().
+     */
+    private function postPosSalesReturnInTransaction(array $return, array $items, int $userId): array
+    {
+        $saleId = (int) $return['sale_id'];
+        $sale = $this->db->query(
+            'SELECT id, status FROM sales WHERE id = ? FOR UPDATE',
+            [$saleId]
+        )->getRowArray();
+        if (!$sale || $sale['status'] !== 'posted') {
+            throw new RuntimeException('Transaksi POS asal tidak lagi berstatus posted.');
+        }
+
+        $restockedQuantity = 0.0;
+        foreach ($items as $item) {
+            $saleItemId = (int) $item['sale_item_id'];
+            $batchId = (int) $item['batch_id'];
+            $quantity = round((float) $item['quantity'], 3);
+
+            $saleItem = $this->db->query(
+                'SELECT * FROM sale_items WHERE id = ? AND sale_id = ? FOR UPDATE',
+                [$saleItemId, $saleId]
+            )->getRowArray();
+            if (!$saleItem || (int) $saleItem['batch_id'] !== $batchId || $quantity <= 0) {
+                throw new RuntimeException('Referensi item atau batch retur POS tidak valid.');
+            }
+
+            $previous = $this->db->query(
+                'SELECT COALESCE(SUM(sri.quantity), 0) AS total
+                 FROM sales_return_items sri
+                 INNER JOIN sales_returns sr ON sr.id = sri.sales_return_id
+                 WHERE sri.sale_item_id = ? AND sr.status = ? AND sr.id != ?',
+                [$saleItemId, 'posted', (int) $return['id']]
+            )->getRowArray();
+
+            $alreadyReturned = (float) ($previous['total'] ?? 0);
+            if ($alreadyReturned + $quantity > (float) $saleItem['quantity'] + 0.0001) {
+                throw new RuntimeException('Jumlah retur melebihi sisa kuantitas item POS.');
+            }
+
+            $batch = $this->db->query(
+                'SELECT * FROM product_batches WHERE id = ? FOR UPDATE',
+                [$batchId]
+            )->getRowArray();
+            if (!$batch || (int) $batch['product_id'] !== (int) $saleItem['product_id']) {
+                throw new RuntimeException('Batch retur tidak sesuai dengan item POS.');
+            }
+
+            if ((int) $item['restockable'] === 1) {
+                if (!empty($batch['expired_at']) && $batch['expired_at'] < date('Y-m-d')) {
+                    throw new RuntimeException('Batch kedaluwarsa tidak dapat dikembalikan ke stok tersedia.');
+                }
+                if ($batch['status'] !== 'available') {
+                    throw new RuntimeException('Status batch tidak memungkinkan penambahan stok.');
+                }
+
+                $updated = $this->db->query(
+                    'UPDATE product_batches
+                     SET quantity_remaining = quantity_remaining + ?, updated_at = ?
+                     WHERE id = ? AND status = ?',
+                    [$quantity, date('Y-m-d H:i:s'), $batchId, 'available']
+                );
+                if (!$updated || $this->db->affectedRows() !== 1) {
+                    throw new RuntimeException('Gagal mengembalikan stok batch POS.');
+                }
+
+                $this->insertStockMovement([
+                    'product_id' => (int) $batch['product_id'],
+                    'batch_id' => $batchId,
+                    'movement_date' => $return['return_date'],
+                    'movement_type' => 'in',
+                    'reference_type' => 'pos_sales_return',
+                    'reference_id' => (int) $return['id'],
+                    'quantity_in' => $quantity,
+                    'quantity_out' => 0,
+                    'unit_cost' => (float) $batch['unit_cost'],
+                    'notes' => 'POS Sales Return ' . $return['return_number'],
+                    'created_by' => $userId,
+                ]);
+                $restockedQuantity += $quantity;
+            }
+        }
+
+        $updated = $this->db->table('sales_returns')
+            ->where('id', (int) $return['id'])
+            ->where('status', 'draft')
+            ->update([
+                'status' => 'posted',
+                'updated_by' => $userId,
+                'updated_at' => date('Y-m-d H:i:s'),
+            ]);
+        if (!$updated || $this->db->affectedRows() !== 1) {
+            throw new RuntimeException('Status retur POS gagal diperbarui.');
+        }
+
+        $this->completeTransaction();
+        return [
+            'return_id' => (int) $return['id'],
+            'status' => 'posted',
+            'total_items' => count($items),
+            'restocked_quantity' => $restockedQuantity,
+        ];
     }
 
     /**
