@@ -689,6 +689,7 @@ class ReturnsService
         $rows = $builder
             ->select([
                 'sr.*',
+                's.sale_number',
                 '(SELECT COUNT(*) FROM sales_return_items sri
               WHERE sri.sales_return_id = sr.id) AS total_items',
                 '(SELECT COALESCE(SUM(sri.quantity), 0)
@@ -699,6 +700,7 @@ class ReturnsService
               WHERE sri.sales_return_id = sr.id
               AND sri.restockable = 1) AS restockable_quantity',
             ])
+            ->join('sales s', 's.id = sr.sale_id', 'left')
             ->orderBy('sr.return_date', 'DESC')
             ->orderBy('sr.id', 'DESC')
             ->get()
@@ -725,12 +727,32 @@ class ReturnsService
             throw new RuntimeException('Data sales return tidak ditemukan.');
         }
 
-        $items = $this->db
-            ->table('sales_return_items')
-            ->where('sales_return_id', $returnId)
-            ->orderBy('id', 'ASC')
-            ->get()
-            ->getResultArray();
+        if (!empty($return['sale_id'])) {
+            $items = $this->db
+                ->table('sales_return_items sri')
+                ->select([
+                    'sri.*',
+                    'si.product_id',
+                    'p.name AS product_name',
+                    'p.sku',
+                    'pb.batch_number',
+                    'pb.expired_at',
+                ])
+                ->join('sale_items si', 'si.id = sri.sale_item_id', 'left')
+                ->join('products p', 'p.id = si.product_id', 'left')
+                ->join('product_batches pb', 'pb.id = sri.batch_id', 'left')
+                ->where('sri.sales_return_id', $returnId)
+                ->orderBy('sri.id', 'ASC')
+                ->get()
+                ->getResultArray();
+        } else {
+            $items = $this->db
+                ->table('sales_return_items')
+                ->where('sales_return_id', $returnId)
+                ->orderBy('id', 'ASC')
+                ->get()
+                ->getResultArray();
+        }
 
         return [
             'return' => $return,
