@@ -27,6 +27,7 @@ final class InventoryPosVerticalSliceTest extends CIUnitTestCase
     private int $purchaseOrderItemId;
     private int $receiptId;
     private int $receiptItemId;
+    private bool $outerTransactionStarted = false;
 
     protected function setUp(): void
     {
@@ -38,6 +39,7 @@ final class InventoryPosVerticalSliceTest extends CIUnitTestCase
 
         $this->db = Database::connect('pharmacy');
         $this->db->transBegin();
+        $this->outerTransactionStarted = true;
 
         $now = date('Y-m-d H:i:s');
         $suffix = strtoupper(bin2hex(random_bytes(4)));
@@ -133,8 +135,9 @@ final class InventoryPosVerticalSliceTest extends CIUnitTestCase
 
     protected function tearDown(): void
     {
-        if ($this->db && $this->db->transDepth > 0) {
+        if ($this->db && $this->outerTransactionStarted) {
             $this->db->transRollback();
+            $this->outerTransactionStarted = false;
         }
 
         parent::tearDown();
@@ -168,6 +171,34 @@ final class InventoryPosVerticalSliceTest extends CIUnitTestCase
                 'quantity' => 10,
             ]],
         ], $this->userId);
+    }
+
+    public function testGoodsReceiptPostingRollsBackWhenBatchTotalIsWrong(): void
+    {
+        $service = new InventoryService();
+
+        try {
+            $service->postGoodsReceipt($this->receiptId, [
+                $this->receiptItemId => [[
+                    'batch_number' => 'VS-BATCH-INVALID',
+                    'expired_at' => '2027-12-31',
+                    'quantity' => 9,
+                ]],
+            ], $this->userId);
+            $this->fail('Posting harus gagal jika total batch tidak sama dengan penerimaan.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('Total batch tidak sama', $e->getMessage());
+        }
+
+        $this->assertSame(0, $this->db->table('product_batches')
+            ->where('goods_receipt_item_id', $this->receiptItemId)
+            ->countAllResults());
+        $this->assertSame(0, $this->db->table('stock_movements')
+            ->where('reference_type', 'goods_receipt')
+            ->where('reference_id', $this->receiptId)
+            ->countAllResults());
+        $this->assertSame('draft', $this->db->table('goods_receipts')
+            ->where('id', $this->receiptId)->get()->getRow('status'));
     }
 
     public function testPosCheckoutDeductsStockAndRepeatedKeyDoesNotDeductTwice(): void
