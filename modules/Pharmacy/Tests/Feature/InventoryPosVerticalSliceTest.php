@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace Modules\\Pharmacy\\Tests\\Feature;
+namespace Modules\Pharmacy\Tests\Feature;
 
-use CodeIgniter\\Test\\CIUnitTestCase;
-use Config\\Database;
-use Modules\\Pharmacy\\Services\\InventoryService;
-use Modules\\Pharmacy\\Services\\ReturnsService;
-use Modules\\Pharmacy\\Services\\SalesService;
+use CodeIgniter\Test\CIUnitTestCase;
+use Config\Database;
+use Modules\Pharmacy\Services\InventoryService;
+use Modules\Pharmacy\Services\ReturnsService;
+use Modules\Pharmacy\Services\SalesService;
 use RuntimeException;
 use Throwable;
 
