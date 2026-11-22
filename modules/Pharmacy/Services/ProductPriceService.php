@@ -126,6 +126,35 @@ class ProductPriceService
         }
     }
 
+    /**
+     * Menutup harga aktif untuk satuan yang dinonaktifkan.
+     * Riwayat harga tetap dipertahankan.
+     */
+    public function closeForUnits(int $productId, array $unitIds): void
+    {
+        $unitIds = array_values(array_unique(array_filter(
+            array_map('intval', $unitIds),
+            static fn (int $id): bool => $id > 0
+        )));
+
+        if ($unitIds === []) {
+            return;
+        }
+
+        $now = date('Y-m-d H:i:s');
+
+        foreach ($this->prices->getActiveByProductId($productId) as $row) {
+            if (!in_array((int) $row['unit_id'], $unitIds, true)) {
+                continue;
+            }
+
+            $validFrom = $this->normalizeDate($row['valid_from']);
+            $validTo = $now > $validFrom ? $now : $validFrom;
+
+            $this->prices->closeById((int) $row['id'], $validTo);
+        }
+    }
+
     private function normalizeDate(string $value): string
     {
         try {
