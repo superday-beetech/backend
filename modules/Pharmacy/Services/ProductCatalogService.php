@@ -404,6 +404,26 @@ class ProductCatalogService
             $keepUnitIds[] = $unitId;
         }
 
+        // Tutup harga aktif milik satuan tambahan yang akan dinonaktifkan.
+        $activeUnits = $this->units->getByProductId($productId);
+        $deactivatedUnitIds = [];
+
+        foreach ($activeUnits as $activeUnit) {
+            $unitId = (int) $activeUnit['unit_id'];
+
+            if (
+                (int) $activeUnit['is_active'] === 1
+                && (int) $activeUnit['is_base'] === 0
+                && !in_array($unitId, $keepUnitIds, true)
+            ) {
+                $deactivatedUnitIds[] = $unitId;
+            }
+        }
+
+        if ($deactivatedUnitIds !== []) {
+            $this->prices->closeForUnits($productId, $deactivatedUnitIds);
+        }
+
         // Satuan dasar tidak ikut dinonaktifkan.
         // Satuan tambahan yang tidak dikirim menjadi nonaktif.
         $this->units->deactivateExcept($productId, $keepUnitIds);
@@ -483,7 +503,15 @@ class ProductCatalogService
                 $payload['product_id'] = $productId;
                 $payload['created_by'] = $userId;
 
-                $this->attributes->insert($payload);
+                $attributeId = $this->attributes->insert($payload);
+
+                if ($attributeId <= 0) {
+                    throw new \\RuntimeException(
+                        'Gagal menyimpan atribut produk.'
+                    );
+                }
+
+                $keepIds[] = $attributeId;
             }
         }
 
