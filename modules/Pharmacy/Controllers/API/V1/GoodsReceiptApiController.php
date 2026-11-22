@@ -560,6 +560,8 @@ class GoodsReceiptApiController extends ApiController
                     'gri.goods_receipt_id',
                     'gri.purchase_order_item_id',
                     'gri.product_id',
+                    'gri.unit_id',
+'gri.conversion_factor',
                     'gri.quantity_received',
                     'gri.unit_cost',
                     'gri.notes',
@@ -699,12 +701,17 @@ class GoodsReceiptApiController extends ApiController
                 }
 
                 $itemId = $this->goodsReceiptItemModel->insert([
-                    'goods_receipt_id' => $receiptId,
+                    'goods_receipt_id'    => $receiptId,
                     'purchase_order_item_id' => $purchaseOrderItemId,
-                    'product_id' => (int) $purchaseOrderItem['product_id'],
-                    'quantity_received' => $quantityReceived,
-                    'unit_cost' => $unitCost,
-                    'notes' => $item['notes'] ?? null,
+                    'product_id'          => (int) $purchaseOrderItem['product_id'],
+                    'quantity_received'   => $quantityReceived,
+
+                    // Warisi satuan dan konversi dari Purchase Order.
+                    'unit_id'             => (int) $purchaseOrderItem['unit_id'],
+                    'conversion_factor'   => (float) $purchaseOrderItem['conversion_factor'],
+
+                    'unit_cost'           => $unitCost,
+                    'notes'               => $item['notes'] ?? null,
                 ]);
 
                 if (!$itemId) {

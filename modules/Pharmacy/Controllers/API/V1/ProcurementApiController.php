@@ -143,6 +143,7 @@ class ProcurementApiController extends ApiController
     /**
      * GET /api/v1/pharmacy/purchase-orders/{id}
      */
+
     public function purchaseOrderDetail(int $id)
     {
         try {
@@ -172,8 +173,32 @@ class ProcurementApiController extends ApiController
                     'p.sku',
                     'p.name AS product_name',
                     'p.barcode',
+
+                    // Informasi satuan transaksi.
+                    'u.name AS unit_name',
+                    'u.abbreviation AS unit_abbreviation',
+
+                    // Konfigurasi satuan produk.
+                    'pu.is_base',
+                    'pu.is_purchase_unit',
+                    'pu.is_sale_unit',
                 ])
-                ->join('products p', 'p.id = poi.product_id', 'left')
+                ->join(
+                    'products p',
+                    'p.id = poi.product_id',
+                    'left'
+                )
+                ->join(
+                    'units u',
+                    'u.id = poi.unit_id',
+                    'left'
+                )
+                ->join(
+                    'product_units pu',
+                    'pu.product_id = poi.product_id
+                 AND pu.unit_id = poi.unit_id',
+                    'left'
+                )
                 ->where('poi.purchase_order_id', $id)
                 ->orderBy('poi.id', 'ASC')
                 ->get()
@@ -186,7 +211,10 @@ class ProcurementApiController extends ApiController
                 'Detail Purchase Order berhasil diambil.'
             );
         } catch (Throwable $e) {
-            log_message('error', '[ProcurementApiController::purchaseOrderDetail] ' . $e->getMessage());
+            log_message(
+                'error',
+                '[ProcurementApiController::purchaseOrderDetail] ' . $e->getMessage()
+            );
 
             return $this->errorResponse(
                 'Gagal mengambil detail Purchase Order.',
@@ -555,18 +583,32 @@ class ProcurementApiController extends ApiController
             }
 
             $items = $this->db->table('goods_receipt_items gri')
-                ->select([
-                    'gri.id',
-                    'gri.goods_receipt_id',
-                    'gri.purchase_order_item_id',
-                    'gri.product_id',
-                    'gri.quantity_received',
-                    'gri.unit_cost',
-                    'gri.notes',
-                    'poi.quantity AS ordered_quantity',
-                    'p.sku',
-                    'p.name AS product_name',
-                ])
+               ->select([
+    'gri.id',
+    'gri.goods_receipt_id',
+    'gri.purchase_order_item_id',
+    'gri.product_id',
+    'gri.quantity_received',
+    'gri.unit_id',
+    'gri.conversion_factor',
+    'gri.quantity_base',
+    'gri.unit_cost',
+    'gri.notes',
+
+    'poi.quantity AS ordered_quantity',
+    'poi.quantity_base AS ordered_quantity_base',
+
+    'p.sku',
+    'p.name AS product_name',
+
+    'u.name AS unit_name',
+    'u.abbreviation AS unit_abbreviation',
+])
+->join(
+    'units u',
+    'u.id = gri.unit_id',
+    'left'
+)
                 ->join(
                     'purchase_order_items poi',
                     'poi.id = gri.purchase_order_item_id',
@@ -699,13 +741,18 @@ class ProcurementApiController extends ApiController
                 }
 
                 $itemId = $this->goodsReceiptItemModel->insert([
-                    'goods_receipt_id' => $receiptId,
-                    'purchase_order_item_id' => $purchaseOrderItemId,
-                    'product_id' => (int) $purchaseOrderItem['product_id'],
-                    'quantity_received' => $quantityReceived,
-                    'unit_cost' => $unitCost,
-                    'notes' => $item['notes'] ?? null,
-                ]);
+    'goods_receipt_id' => $receiptId,
+    'purchase_order_item_id' => $purchaseOrderItemId,
+    'product_id' => (int) $purchaseOrderItem['product_id'],
+
+    // Satuan diwariskan dari item Purchase Order.
+    'unit_id' => (int) $purchaseOrderItem['unit_id'],
+    'conversion_factor' => (float) $purchaseOrderItem['conversion_factor'],
+
+    'quantity_received' => $quantityReceived,
+    'unit_cost' => $unitCost,
+    'notes' => $item['notes'] ?? null,
+]);
 
                 if (!$itemId) {
                     throw new RuntimeException(

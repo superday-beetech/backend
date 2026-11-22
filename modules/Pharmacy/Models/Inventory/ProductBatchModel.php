@@ -19,6 +19,7 @@ class ProductBatchModel extends PharmacyModel
         'quantity_remaining',
         'unit_cost',
         'status',
+        'status_before_recall',
     ];
 
     protected $useTimestamps = true;

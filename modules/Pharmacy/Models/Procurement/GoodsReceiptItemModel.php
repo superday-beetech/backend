@@ -15,6 +15,8 @@ class GoodsReceiptItemModel extends PharmacyModel
         'purchase_order_item_id',
         'product_id',
         'quantity_received',
+        'unit_id',
+        'conversion_factor',
         'unit_cost',
         'notes',
     ];

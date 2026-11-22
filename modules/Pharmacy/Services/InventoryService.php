@@ -343,9 +343,19 @@ class InventoryService
         $date = trim((string) ($data['opname_date'] ?? ''));
         $notes = trim((string) ($data['notes'] ?? ''));
 
+        if ($userId <= 0) {
+            throw new InvalidArgumentException('User tidak valid.');
+        }
+
         if ($number === '') {
             throw new InvalidArgumentException(
                 'Nomor stock opname wajib diisi.'
+            );
+        }
+
+        if (strlen($number) > 40) {
+            throw new InvalidArgumentException(
+                'Nomor stock opname maksimal 40 karakter.'
             );
         }
 
@@ -355,30 +365,31 @@ class InventoryService
             );
         }
 
-        $exists = $this->db->table('stock_opnames')
-            ->where('opname_number', $number)
-            ->countAllResults();
-
-        if ($exists > 0) {
-            throw new InvalidArgumentException(
-                'Nomor stock opname sudah digunakan.'
-            );
-        }
-
         $this->db->transBegin();
 
         try {
-            $batches = $this->db->table('product_batches')
-                ->select([
-                    'id',
-                    'product_id',
-                    'quantity_remaining',
-                ])
-                ->where('status', 'available')
-                ->orderBy('product_id', 'ASC')
-                ->orderBy('id', 'ASC')
-                ->get()
-                ->getResultArray();
+            // Cek nomor opname di dalam transaksi.
+            $exists = $this->db->table('stock_opnames')
+                ->where('opname_number', $number)
+                ->countAllResults();
+
+            if ($exists > 0) {
+                throw new InvalidArgumentException(
+                    'Nomor stock opname sudah digunakan.'
+                );
+            }
+
+            // Lock batch agar snapshot diambil secara konsisten.
+            $batches = $this->db->query(
+                "SELECT
+                id,
+                product_id,
+                quantity_remaining
+             FROM product_batches
+             WHERE status = 'available'
+             ORDER BY product_id ASC, id ASC
+             FOR UPDATE"
+            )->getResultArray();
 
             if (empty($batches)) {
                 throw new RuntimeException(
@@ -405,31 +416,26 @@ class InventoryService
 
             foreach ($batches as $batch) {
                 $items[] = [
-                    'stock_opname_id' => (int) $opnameId,
-                    'product_id'      => (int) $batch['product_id'],
-                    'batch_id'        => (int) $batch['id'],
-                    'system_quantity' => (float) $batch['quantity_remaining'],
-                    'counted_quantity' => null,
+                    'stock_opname_id'    => (int) $opnameId,
+                    'product_id'         => (int) $batch['product_id'],
+                    'batch_id'           => (int) $batch['id'],
+                    'system_quantity'    => round(
+                        (float) $batch['quantity_remaining'],
+                        3
+                    ),
+                    'counted_quantity'   => null,
                     'difference_quantity' => null,
-                    'notes' => null,
+                    'notes'              => null,
                 ];
             }
 
-            $inserted = $this->stockOpnameItemModel->insertBatch($items);
-
-            if (!$inserted) {
+            if (!$this->stockOpnameItemModel->insertBatch($items)) {
                 throw new RuntimeException(
                     'Gagal membuat item stock opname.'
                 );
             }
 
-            if ($this->db->transStatus() === false) {
-                throw new RuntimeException(
-                    'Transaksi stock opname gagal.'
-                );
-            }
-
-            $this->db->transCommit();
+            $this->commitTransaction();
 
             return (int) $opnameId;
         } catch (Throwable $e) {
@@ -446,6 +452,12 @@ class InventoryService
     ): array {
         $items = $data['items'] ?? [];
 
+        if ($opnameId <= 0 || $userId <= 0) {
+            throw new InvalidArgumentException(
+                'ID stock opname atau user tidak valid.'
+            );
+        }
+
         if (!is_array($items) || empty($items)) {
             throw new InvalidArgumentException(
                 'Data penghitungan stock opname wajib diisi.'
@@ -455,10 +467,14 @@ class InventoryService
         $this->db->transBegin();
 
         try {
-            $opname = $this->db->table('stock_opnames')
-                ->where('id', $opnameId)
-                ->get()
-                ->getRowArray();
+            // Lock header untuk mencegah save bersamaan dengan posting.
+            $opname = $this->db->query(
+                'SELECT *
+             FROM stock_opnames
+             WHERE id = ?
+             FOR UPDATE',
+                [$opnameId]
+            )->getRowArray();
 
             if (!$opname) {
                 throw new RuntimeException(
@@ -472,15 +488,43 @@ class InventoryService
                 );
             }
 
-            $allowedItems = [];
+            // Lock seluruh item opname.
+            $existingItems = $this->db->query(
+                'SELECT *
+             FROM stock_opname_items
+             WHERE stock_opname_id = ?
+             ORDER BY id ASC
+             FOR UPDATE',
+                [$opnameId]
+            )->getResultArray();
+
+            if (empty($existingItems)) {
+                throw new RuntimeException(
+                    'Stock opname tidak memiliki item.'
+                );
+            }
+
+            $existingMap = [];
+
+            foreach ($existingItems as $existingItem) {
+                $existingMap[(int) $existingItem['id']] = $existingItem;
+            }
+
+            $normalizedItems = [];
 
             foreach ($items as $item) {
+                if (!is_array($item)) {
+                    throw new InvalidArgumentException(
+                        'Format item stock opname tidak valid.'
+                    );
+                }
+
                 $itemId = (int) ($item['item_id'] ?? 0);
                 $quantity = $item['counted_quantity'] ?? null;
 
-                if ($itemId <= 0) {
+                if ($itemId <= 0 || !isset($existingMap[$itemId])) {
                     throw new InvalidArgumentException(
-                        'Item stock opname tidak valid.'
+                        'Item tidak termasuk dalam stock opname ini.'
                     );
                 }
 
@@ -495,80 +539,64 @@ class InventoryService
                     );
                 }
 
-                if (isset($allowedItems[$itemId])) {
+                if (isset($normalizedItems[$itemId])) {
                     throw new InvalidArgumentException(
                         'Item stock opname dikirim lebih dari satu kali.'
                     );
                 }
 
-                $allowedItems[$itemId] = [
+                $notes = $item['notes'] ?? null;
+
+                if ($notes !== null && !is_scalar($notes)) {
+                    throw new InvalidArgumentException(
+                        'Catatan item tidak valid.'
+                    );
+                }
+
+                $normalizedItems[$itemId] = [
                     'counted_quantity' => round((float) $quantity, 3),
-                    'notes' => isset($item['notes'])
-                        ? trim((string) $item['notes'])
+                    'notes' => $notes !== null && trim((string) $notes) !== ''
+                        ? trim((string) $notes)
                         : null,
                 ];
             }
 
-            $existingItems = $this->db->table('stock_opname_items')
-                ->where('stock_opname_id', $opnameId)
-                ->get()
-                ->getResultArray();
-
-            $existingIds = array_map(
-                static fn(array $row): int => (int) $row['id'],
-                $existingItems
-            );
-
-            foreach ($allowedItems as $itemId => $count) {
-                if (!in_array($itemId, $existingIds, true)) {
-                    throw new InvalidArgumentException(
-                        'Item tidak termasuk dalam stock opname ini.'
-                    );
-                }
-
-                $item = $this->db->table('stock_opname_items')
-                    ->where('id', $itemId)
-                    ->where('stock_opname_id', $opnameId)
-                    ->get()
-                    ->getRowArray();
+            foreach ($normalizedItems as $itemId => $count) {
+                $existing = $existingMap[$itemId];
 
                 $difference = round(
                     $count['counted_quantity']
-                        - (float) $item['system_quantity'],
+                        - (float) $existing['system_quantity'],
                     3
                 );
 
-                $updated = $this->stockOpnameItemModel->update(
+                if (!$this->stockOpnameItemModel->update(
                     $itemId,
                     [
-                        'counted_quantity' => $count['counted_quantity'],
+                        'counted_quantity'    => $count['counted_quantity'],
                         'difference_quantity' => $difference,
-                        'notes' => $count['notes'],
+                        'notes'               => $count['notes'],
                     ]
-                );
-
-                if (!$updated) {
+                )) {
                     throw new RuntimeException(
-                        'Gagal menyimpan hasil penghitungan item.'
+                        "Gagal menyimpan penghitungan item {$itemId}."
                     );
                 }
             }
 
-            $this->stockOpnameModel->update($opnameId, [
+            if (!$this->stockOpnameModel->update($opnameId, [
                 'updated_by' => $userId,
-            ]);
-
-            if ($this->db->transStatus() === false) {
+            ])) {
                 throw new RuntimeException(
-                    'Gagal menyimpan penghitungan stock opname.'
+                    'Gagal memperbarui stock opname.'
                 );
             }
 
-            $this->db->transCommit();
+            $this->commitTransaction();
 
             return [
-                'opname_id' => $opnameId,
-                'updated_items' => count($allowedItems),
+                'opname_id'     => $opnameId,
+                'updated_items' => count($normalizedItems),
             ];
         } catch (Throwable $e) {
             $this->db->transRollback();
@@ -581,12 +609,21 @@ class InventoryService
         int $opnameId,
         int $userId
     ): array {
+        if ($opnameId <= 0 || $userId <= 0) {
+            throw new InvalidArgumentException(
+                'ID stock opname atau user tidak valid.'
+            );
+        }
+
         $this->db->transBegin();
 
         try {
-            // Lock header agar tidak diposting dua kali.
+            // Lock header agar tidak terjadi posting ganda.
             $opname = $this->db->query(
-                'SELECT * FROM stock_opnames WHERE id = ? FOR UPDATE',
+                'SELECT *
+             FROM stock_opnames
+             WHERE id = ?
+             FOR UPDATE',
                 [$opnameId]
             )->getRowArray();
 
@@ -602,11 +639,12 @@ class InventoryService
                 );
             }
 
-            // Lock semua item opname.
+            // Lock item dengan urutan batch_id agar konsisten.
             $items = $this->db->query(
-                'SELECT * FROM stock_opname_items
+                'SELECT *
+             FROM stock_opname_items
              WHERE stock_opname_id = ?
-             ORDER BY id ASC
+             ORDER BY batch_id ASC, id ASC
              FOR UPDATE',
                 [$opnameId]
             )->getResultArray();
@@ -617,10 +655,22 @@ class InventoryService
                 );
             }
 
+            $batchIds = [];
+
             foreach ($items as $item) {
                 if ($item['counted_quantity'] === null) {
                     throw new RuntimeException(
                         'Masih ada item yang belum dihitung.'
+                    );
+                }
+
+                if (
+                    !is_numeric($item['counted_quantity']) ||
+                    !is_finite((float) $item['counted_quantity']) ||
+                    (float) $item['counted_quantity'] < 0
+                ) {
+                    throw new RuntimeException(
+                        'Jumlah fisik pada item tidak valid.'
                     );
                 }
 
@@ -632,15 +682,58 @@ class InventoryService
                     );
                 }
 
-                // Lock batch untuk mencegah perubahan saldo bersamaan.
-                $batch = $this->db->query(
-                    'SELECT * FROM product_batches WHERE id = ? FOR UPDATE',
-                    [$batchId]
-                )->getRowArray();
+                $batchIds[] = $batchId;
+            }
+
+            $batchIds = array_values(array_unique($batchIds));
+            sort($batchIds);
+
+            // Lock seluruh batch sekaligus dengan urutan ID.
+            $placeholders = implode(
+                ',',
+                array_fill(0, count($batchIds), '?')
+            );
+
+            $batches = $this->db->query(
+                "SELECT *
+             FROM product_batches
+             WHERE id IN ({$placeholders})
+             ORDER BY id ASC
+             FOR UPDATE",
+                $batchIds
+            )->getResultArray();
+
+            $batchMap = [];
+
+            foreach ($batches as $batch) {
+                $batchMap[(int) $batch['id']] = $batch;
+            }
+
+            if (count($batchMap) !== count($batchIds)) {
+                throw new RuntimeException(
+                    'Satu atau lebih batch stock opname tidak ditemukan.'
+                );
+            }
+
+            foreach ($items as $item) {
+                $itemId = (int) $item['id'];
+                $batchId = (int) $item['batch_id'];
+
+                $batch = $batchMap[$batchId] ?? null;
 
                 if (!$batch) {
                     throw new RuntimeException(
                         "Batch ID {$batchId} tidak ditemukan."
+                    );
+                }
+
+                // Pastikan item tidak menunjuk batch produk lain.
+                if (
+                    (int) $batch['product_id'] !==
+                    (int) $item['product_id']
+                ) {
+                    throw new RuntimeException(
+                        "Produk pada batch {$batch['batch_number']} tidak sesuai dengan item opname."
                     );
                 }
 
@@ -659,11 +752,10 @@ class InventoryService
                     3
                 );
 
-                // Cegah saldo yang sudah berubah sejak snapshot ditimpa.
-                if ($currentQuantity !== $systemQuantity) {
+                // Optimistic concurrency check.
+                if (abs($currentQuantity - $systemQuantity) > 0.0005) {
                     throw new RuntimeException(
-                        "Saldo batch {$batch['batch_number']} telah berubah " .
-                            'sejak stock opname dibuat. Posting dibatalkan.'
+                        "Saldo batch {$batch['batch_number']} telah berubah sejak stock opname dibuat. Posting dibatalkan."
                     );
                 }
 
@@ -672,21 +764,31 @@ class InventoryService
                     3
                 );
 
-                // Perbarui saldo batch sesuai hasil hitung fisik.
-                $updated = $this->productBatchModel->update(
+                // Update saldo fisik.
+                if (!$this->productBatchModel->update(
                     $batchId,
                     [
                         'quantity_remaining' => $countedQuantity,
                     ]
-                );
-
-                if (!$updated) {
+                )) {
                     throw new RuntimeException(
                         "Gagal memperbarui saldo batch {$batch['batch_number']}."
                     );
                 }
 
-                // Tidak perlu membuat mutasi jika tidak ada selisih.
+                // Simpan selisih untuk semua item, termasuk selisih nol.
+                if (!$this->stockOpnameItemModel->update(
+                    $itemId,
+                    [
+                        'difference_quantity' => $difference,
+                    ]
+                )) {
+                    throw new RuntimeException(
+                        "Gagal memperbarui selisih item {$itemId}."
+                    );
+                }
+
+                // Tidak membuat mutasi apabila tidak ada selisih.
                 if ($difference == 0.0) {
                     continue;
                 }
@@ -701,61 +803,66 @@ class InventoryService
                     ? abs($difference)
                     : 0;
 
-                $movementInserted = $this->stockMovementModel->insert([
-                    'product_id' => (int) $item['product_id'],
-                    'batch_id' => $batchId,
-                    'movement_date' => $opname['opname_date'] . ' 00:00:00',
-                    'movement_type' => $movementType,
+                $movementId = $this->stockMovementModel->insert([
+                    'product_id'     => (int) $item['product_id'],
+                    'batch_id'       => $batchId,
+                    'movement_date'  => $opname['opname_date'] . ' 00:00:00',
+                    'movement_type'  => $movementType,
                     'reference_type' => 'stock_opname',
-                    'reference_id' => $opnameId,
-                    'quantity_in' => $quantityIn,
-                    'quantity_out' => $quantityOut,
-                    'unit_cost' => (float) $batch['unit_cost'],
-                    'notes' => 'Penyesuaian Stock Opname ' .
+                    'reference_id'   => $opnameId,
+                    'quantity_in'    => $quantityIn,
+                    'quantity_out'   => $quantityOut,
+                    'unit_cost'      => (float) $batch['unit_cost'],
+                    'notes'          => 'Penyesuaian Stock Opname ' .
                         $opname['opname_number'],
-                    'created_by' => $userId,
+                    'created_by'     => $userId,
                 ]);
 
-                if (!$movementInserted) {
+                if (!$movementId) {
                     throw new RuntimeException(
-                        'Gagal mencatat mutasi stock opname.'
+                        "Gagal mencatat mutasi batch {$batch['batch_number']}."
                     );
                 }
-
-                // Pastikan hasil selisih tersimpan.
-                $this->stockOpnameItemModel->update(
-                    (int) $item['id'],
-                    [
-                        'difference_quantity' => $difference,
-                    ]
-                );
             }
 
-            $updated = $this->stockOpnameModel->update(
+            if (!$this->stockOpnameModel->update(
                 $opnameId,
                 [
-                    'status' => 'posted',
+                    'status'     => 'posted',
                     'updated_by' => $userId,
                 ]
-            );
-
-            if (!$updated || $this->db->transStatus() === false) {
+            )) {
                 throw new RuntimeException(
                     'Gagal menyelesaikan posting stock opname.'
                 );
             }
 
-            $this->db->transCommit();
+            $this->commitTransaction();
 
             return [
-                'opname_id' => $opnameId,
+                'opname_id'     => $opnameId,
                 'opname_number' => $opname['opname_number'],
-                'status' => 'posted',
-                'total_items' => count($items),
+                'status'        => 'posted',
+                'total_items'   => count($items),
             ];
         } catch (Throwable $e) {
             $this->db->transRollback();
             throw $e;
+        }
+    }
+
+    private function commitTransaction(): void
+    {
+        if ($this->db->transStatus() === false) {
+            throw new RuntimeException(
+                'Transaksi database gagal.'
+            );
+        }
+
+        if (!$this->db->transCommit()) {
+            throw new RuntimeException(
+                'Gagal melakukan commit transaksi database.'
+            );
         }
     }
 
@@ -775,6 +882,7 @@ class InventoryService
      * ]
      */
 
+
     public function postGoodsReceipt(
         int $receiptId,
         array $batchBreakdown,
@@ -790,9 +898,7 @@ class InventoryService
             )->getRowArray();
 
             if (!$receipt) {
-                throw new RuntimeException(
-                    'Goods Receipt tidak ditemukan.'
-                );
+                throw new RuntimeException('Goods Receipt tidak ditemukan.');
             }
 
             if ($receipt['status'] !== 'draft') {
@@ -810,9 +916,7 @@ class InventoryService
             )->getRowArray();
 
             if (!$purchaseOrder) {
-                throw new RuntimeException(
-                    'Purchase Order tidak ditemukan.'
-                );
+                throw new RuntimeException('Purchase Order tidak ditemukan.');
             }
 
             // 3. Lock Goods Receipt Items.
@@ -829,7 +933,7 @@ class InventoryService
                 );
             }
 
-            // 4. Hitung penerimaan pada receipt ini.
+            // 4. Hitung penerimaan receipt ini dalam satuan dasar.
             $currentReceived = [];
 
             foreach ($items as $item) {
@@ -843,32 +947,32 @@ class InventoryService
 
                 $currentReceived[$poItemId] =
                     ($currentReceived[$poItemId] ?? 0)
-                    + (float) $item['quantity_received'];
+                    + (float) $item['quantity_base'];
             }
 
-            // 5. Ambil kuantitas PO dan penerimaan yang sudah posted.
+            // 5. Ambil kuantitas PO dan penerimaan posted dalam satuan dasar.
             $poItems = $this->db->query(
                 'SELECT
                 poi.id,
-                poi.quantity,
+                poi.quantity_base,
                 COALESCE(
                     SUM(
                         CASE
                             WHEN gr.status = "posted"
                              AND gr.id != ?
-                            THEN gri.quantity_received
+                            THEN gri.quantity_base
                             ELSE 0
                         END
                     ),
                     0
-                ) AS posted_quantity
+                ) AS posted_quantity_base
              FROM purchase_order_items poi
              LEFT JOIN goods_receipt_items gri
                 ON gri.purchase_order_item_id = poi.id
              LEFT JOIN goods_receipts gr
                 ON gr.id = gri.goods_receipt_id
              WHERE poi.purchase_order_id = ?
-             GROUP BY poi.id, poi.quantity',
+             GROUP BY poi.id, poi.quantity_base',
                 [$receiptId, $purchaseOrderId]
             )->getResultArray();
 
@@ -878,12 +982,12 @@ class InventoryService
                 );
             }
 
-            // 6. Validasi agar penerimaan tidak melebihi PO.
+            // 6. Validasi agar penerimaan tidak melebihi jumlah PO.
             foreach ($poItems as $poItem) {
                 $poItemId = (int) $poItem['id'];
 
-                $orderedQuantity = (float) $poItem['quantity'];
-                $postedQuantity = (float) $poItem['posted_quantity'];
+                $orderedQuantity = (float) $poItem['quantity_base'];
+                $postedQuantity = (float) $poItem['posted_quantity_base'];
                 $currentQuantity = (float) (
                     $currentReceived[$poItemId] ?? 0
                 );
@@ -897,9 +1001,9 @@ class InventoryService
                 }
             }
 
-            // Pastikan tidak ada item receipt yang mengacu ke PO item lain.
+            // Pastikan receipt item hanya mengacu ke PO item milik PO ini.
             $validPoItemIds = array_map(
-                static fn($item) => (int) $item['id'],
+                static fn ($item) => (int) $item['id'],
                 $poItems
             );
 
@@ -911,7 +1015,7 @@ class InventoryService
                 }
             }
 
-            // 7. Buat batch dan stock movement.
+            // 7. Buat batch dan stock movement dalam satuan dasar.
             $createdBatches = [];
 
             foreach ($items as $item) {
@@ -925,8 +1029,42 @@ class InventoryService
                     );
                 }
 
+
                 $receivedQuantity = (float) $item['quantity_received'];
-                $allocatedQuantity = 0;
+                $conversionFactor = (float) $item['conversion_factor'];
+                $unitCost = (float) $item['unit_cost'];
+
+                if (
+                    !is_finite($receivedQuantity) ||
+                    $receivedQuantity <= 0
+                ) {
+                    throw new RuntimeException(
+                        "Jumlah penerimaan receipt item {$itemId} tidak valid."
+                    );
+                }
+
+                if (
+                    !is_finite($conversionFactor) ||
+                    $conversionFactor <= 0
+                ) {
+                    throw new RuntimeException(
+                        "Faktor konversi receipt item {$itemId} tidak valid."
+                    );
+                }
+
+                if (!is_finite($unitCost) || $unitCost < 0) {
+                    throw new RuntimeException(
+                        "Harga satuan receipt item {$itemId} tidak valid."
+                    );
+                }
+
+                // Harga pokok per satuan dasar.
+                $baseUnitCost = round(
+                    $unitCost / $conversionFactor,
+                    6
+                );
+
+                $allocatedQuantity = 0.0;
 
                 foreach ($batchRows as $batch) {
                     if (!is_array($batch)) {
@@ -939,7 +1077,8 @@ class InventoryService
                         (string) ($batch['batch_number'] ?? '')
                     );
 
-                    $quantity = (float) ($batch['quantity'] ?? 0);
+                    // Quantity batch menggunakan satuan Goods Receipt.
+                    $quantity = $batch['quantity'] ?? 0;
                     $expiredAt = $batch['expired_at'] ?? null;
 
                     if ($batchNumber === '') {
@@ -948,11 +1087,17 @@ class InventoryService
                         );
                     }
 
-                    if (!is_finite($quantity) || $quantity <= 0) {
+                    if (
+                        !is_numeric($quantity) ||
+                        !is_finite((float) $quantity) ||
+                        (float) $quantity <= 0
+                    ) {
                         throw new RuntimeException(
                             'Jumlah batch harus lebih besar dari nol.'
                         );
                     }
+
+                    $quantity = (float) $quantity;
 
                     if (
                         $expiredAt !== null &&
@@ -966,18 +1111,31 @@ class InventoryService
                         );
                     }
 
+                    // Konversi ke satuan dasar produk.
+                    $quantityBase = round(
+                        $quantity * $conversionFactor,
+                        3
+                    );
+
+                    if ($quantityBase <= 0) {
+                        throw new RuntimeException(
+                            'Jumlah batch dalam satuan dasar tidak valid.'
+                        );
+                    }
+
+                    // Akumulasi menggunakan satuan Goods Receipt.
                     $allocatedQuantity += $quantity;
 
-                    // Create Product Batch.
+                    // Buat Product Batch.
                     $batchId = $this->productBatchModel->insert([
-                        'product_id'          => $item['product_id'],
+                        'product_id'            => (int) $item['product_id'],
                         'goods_receipt_item_id' => $itemId,
-                        'batch_number'        => $batchNumber,
-                        'expired_at'          => $expiredAt,
-                        'received_quantity'   => $quantity,
-                        'quantity_remaining'  => $quantity,
-                        'unit_cost'           => $item['unit_cost'],
-                        'status'              => 'available',
+                        'batch_number'          => $batchNumber,
+                        'expired_at'            => $expiredAt,
+                        'received_quantity'     => $quantityBase,
+                        'quantity_remaining'    => $quantityBase,
+                        'unit_cost'             => $baseUnitCost,
+                        'status'                => 'available',
                     ]);
 
                     if (!$batchId) {
@@ -986,20 +1144,20 @@ class InventoryService
                         );
                     }
 
-                    // Record Stock Movement.
+                    // Catat Stock Movement dalam satuan dasar.
                     $movementId = $this->stockMovementModel->insert([
-                        'product_id'    => $item['product_id'],
-                        'batch_id'      => $batchId,
-                        'movement_date' => $receipt['received_date'],
-                        'movement_type' => 'in',
+                        'product_id'     => (int) $item['product_id'],
+                        'batch_id'       => (int) $batchId,
+                        'movement_date'  => $receipt['received_date'],
+                        'movement_type'  => 'in',
                         'reference_type' => 'goods_receipt',
-                        'reference_id'  => $receiptId,
-                        'quantity_in'   => $quantity,
-                        'quantity_out'  => 0,
-                        'unit_cost'     => $item['unit_cost'],
-                        'notes'         => 'Goods Receipt ' . $receipt['receipt_number'],
-                        'created_by'    => $userId,
-                        'created_at'    => date('Y-m-d H:i:s'),
+                        'reference_id'   => $receiptId,
+                        'quantity_in'    => $quantityBase,
+                        'quantity_out'   => 0,
+                        'unit_cost'      => $baseUnitCost,
+                        'notes'          => 'Goods Receipt ' . $receipt['receipt_number'],
+                        'created_by'     => $userId,
+                        'created_at'     => date('Y-m-d H:i:s'),
                     ]);
 
                     if (!$movementId) {
@@ -1011,7 +1169,8 @@ class InventoryService
                     $createdBatches[] = (int) $batchId;
                 }
 
-                // Total batch harus sama dengan jumlah receipt item.
+
+                // Total alokasi batch harus sama dengan jumlah receipt item.
                 if (
                     abs($allocatedQuantity - $receivedQuantity) > 0.0001
                 ) {
@@ -1031,14 +1190,14 @@ class InventoryService
                 );
             }
 
-            // 9. Tentukan status Purchase Order.
+            // 9. Tentukan status Purchase Order berdasarkan satuan dasar.
             $allReceived = true;
 
             foreach ($poItems as $poItem) {
                 $poItemId = (int) $poItem['id'];
 
-                $orderedQuantity = (float) $poItem['quantity'];
-                $postedQuantity = (float) $poItem['posted_quantity'];
+                $orderedQuantity = (float) $poItem['quantity_base'];
+                $postedQuantity = (float) $poItem['posted_quantity_base'];
                 $currentQuantity = (float) (
                     $currentReceived[$poItemId] ?? 0
                 );
@@ -1074,12 +1233,12 @@ class InventoryService
             $this->db->transCommit();
 
             return [
-                'receipt_id'          => $receiptId,
-                'receipt_number'      => $receipt['receipt_number'],
-                'status'              => 'posted',
-                'purchase_order_id'   => $purchaseOrderId,
+                'receipt_id'            => $receiptId,
+                'receipt_number'        => $receipt['receipt_number'],
+                'status'                => 'posted',
+                'purchase_order_id'     => $purchaseOrderId,
                 'purchase_order_status' => $purchaseOrderStatus,
-                'batch_ids'           => $createdBatches,
+                'batch_ids'             => $createdBatches,
             ];
         } catch (Throwable $e) {
             $this->db->transRollback();
@@ -1087,6 +1246,7 @@ class InventoryService
             throw $e;
         }
     }
+
     /**
      * Generate FEFO batch allocation.
      *
