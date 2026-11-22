@@ -11,14 +11,16 @@ class PurchaseOrderItemModel extends PharmacyModel
     protected $table = 'purchase_order_items';
 
     protected $allowedFields = [
-        'purchase_order_id',
-        'product_id',
-        'quantity',
-        'unit_cost',
-        'discount_amount',
-        'subtotal',
-        'notes',
-    ];
+    'purchase_order_id',
+    'product_id',
+    'unit_id',
+    'conversion_factor',
+    'quantity',
+    'unit_cost',
+    'discount_amount',
+    'subtotal',
+    'notes',
+];
 
     protected $useTimestamps = true;
 }

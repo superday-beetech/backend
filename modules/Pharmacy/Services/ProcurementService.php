@@ -18,6 +18,7 @@ class ProcurementService
 
     protected SupplierModel $supplierModel;
     protected ProductModel $productModel;
+    protected ProductUnitService $productUnitService;
     protected PurchaseOrderModel $purchaseOrderModel;
     protected PurchaseOrderItemModel $purchaseOrderItemModel;
 
@@ -27,6 +28,7 @@ class ProcurementService
 
         $this->supplierModel = new SupplierModel();
         $this->productModel = new ProductModel();
+        $this->productUnitService = new ProductUnitService();
 
         $this->purchaseOrderModel = new PurchaseOrderModel();
         $this->purchaseOrderItemModel = new PurchaseOrderItemModel();
@@ -56,15 +58,23 @@ class ProcurementService
             $subtotal = 0;
 
             foreach ($data['items'] as $item) {
-                $product = $this->productModel->find(
-                    $item['product_id']
-                );
+                $productId = (int) $item['product_id'];
+                $unitId = (int) $item['unit_id'];
+
+                $product = $this->productModel->find($productId);
 
                 if (!$product) {
                     throw new RuntimeException(
-                        'Produk ID ' . $item['product_id'] . ' tidak ditemukan.'
+                        'Produk ID ' . $productId . ' tidak ditemukan.'
                     );
                 }
+
+                // Validasi satuan pembelian produk.
+                $unit = $this->productUnitService->resolveUnit(
+                    $productId,
+                    $unitId,
+                    'purchase'
+                );
 
                 $quantity = (float) $item['quantity'];
                 $unitCost = (float) $item['unit_cost'];
@@ -83,12 +93,16 @@ class ProcurementService
                 $subtotal += $lineSubtotal;
 
                 $items[] = [
-                    'product_id'     => $item['product_id'],
-                    'quantity'       => $quantity,
-                    'unit_cost'      => $unitCost,
-                    'discount_amount' => $discount,
-                    'subtotal'       => $lineSubtotal,
-                    'notes'          => $item['notes'] ?? null,
+                    'product_id'        => $productId,
+                    'unit_id'           => $unitId,
+                    'conversion_factor' => $unit['conversion_factor'],
+                    'quantity'          => $quantity,
+                    'unit_cost'         => $unitCost,
+                    'discount_amount'   => $discount,
+                    'subtotal'          => $lineSubtotal,
+                    'purchase_mode'     => $data['purchase_mode'] ?? 'delivery',
+                    'notes'             => $item['notes'] ?? null,
+
                 ];
             }
 
@@ -145,11 +159,7 @@ class ProcurementService
                 }
             }
 
-            if ($this->db->transStatus() === false) {
-                throw new RuntimeException(
-                    'Transaksi Purchase Order gagal.'
-                );
-            }
+            $this->commitTransaction();
 
             $this->db->transCommit();
 
@@ -213,7 +223,7 @@ class ProcurementService
                 );
             }
 
-            foreach (['product_id', 'quantity', 'unit_cost'] as $field) {
+            foreach (['product_id', 'unit_id', 'quantity', 'unit_cost'] as $field) {
                 if (!isset($item[$field]) || !is_numeric($item[$field])) {
                     throw new RuntimeException(
                         "Item " . ($index + 1) . ": {$field} tidak valid."
@@ -222,16 +232,26 @@ class ProcurementService
             }
 
             $productId = (float) $item['product_id'];
+            $unitId = (float) $item['unit_id'];
+
+            if (
+                $unitId <= 0 ||
+                floor($unitId) !== $unitId
+            ) {
+                throw new RuntimeException('Unit ID tidak valid.');
+            }
             $quantity = (float) $item['quantity'];
             $unitCost = (float) $item['unit_cost'];
             $discount = (float) ($item['discount_amount'] ?? 0);
 
             if (
                 $productId <= 0 ||
-                floor($productId) !== $productId
+                floor($productId) !== $productId ||
+                $unitId <= 0 ||
+                floor($unitId) !== $unitId
             ) {
                 throw new RuntimeException(
-                    'Product ID tidak valid.'
+                    'Product ID atau Unit ID tidak valid.'
                 );
             }
 
@@ -327,6 +347,7 @@ class ProcurementService
 
             foreach ($data['items'] as $item) {
                 $productId = (int) $item['product_id'];
+                $unitId = (int) $item['unit_id'];
 
                 $product = $this->productModel->find($productId);
 
@@ -335,6 +356,13 @@ class ProcurementService
                         'Produk ID ' . $productId . ' tidak ditemukan.'
                     );
                 }
+
+                // Validasi satuan pembelian produk.
+                $unit = $this->productUnitService->resolveUnit(
+                    $productId,
+                    $unitId,
+                    'purchase'
+                );
 
                 $quantity = (float) $item['quantity'];
                 $unitCost = (float) $item['unit_cost'];
@@ -354,6 +382,8 @@ class ProcurementService
                 $items[] = [
                     'purchase_order_id' => $orderId,
                     'product_id'        => $productId,
+                    'unit_id'           => $unitId,
+                    'conversion_factor' => $unit['conversion_factor'],
                     'quantity'          => $quantity,
                     'unit_cost'         => $unitCost,
                     'discount_amount'   => $discount,
@@ -385,6 +415,7 @@ class ProcurementService
                 'subtotal'        => $subtotal,
                 'discount_amount' => $discountAmount,
                 'tax_amount'      => $taxAmount,
+                'purchase_mode'   => $data['purchase_mode'] ?? $order['purchase_mode'],
                 'total_amount'    => $totalAmount,
                 'notes'           => $data['notes'] ?? null,
                 'updated_by'      => $userId,
@@ -480,6 +511,21 @@ class ProcurementService
         } catch (Throwable $e) {
             $this->db->transRollback();
             throw $e;
+        }
+    }
+
+    private function commitTransaction(): void
+    {
+        if ($this->db->transStatus() === false) {
+            throw new RuntimeException(
+                'Transaksi Purchase Order gagal.'
+            );
+        }
+
+        if (!$this->db->transCommit()) {
+            throw new RuntimeException(
+                'Gagal melakukan commit transaksi Purchase Order.'
+            );
         }
     }
 }

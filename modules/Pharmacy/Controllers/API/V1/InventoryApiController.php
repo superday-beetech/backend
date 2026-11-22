@@ -8,16 +8,19 @@ use App\Core\ApiController;
 use CodeIgniter\HTTP\ResponseInterface;
 use InvalidArgumentException;
 use Modules\Pharmacy\Services\InventoryService;
+use Modules\Pharmacy\Services\ProductRecallService;
 use RuntimeException;
 use Throwable;
 
 class InventoryApiController extends ApiController
 {
     private InventoryService $inventoryService;
+    private ProductRecallService $productRecallService;
 
     public function __construct()
     {
         $this->inventoryService = new InventoryService();
+        $this->productRecallService = new ProductRecallService();
     }
 
     /**
@@ -26,7 +29,7 @@ class InventoryApiController extends ApiController
     public function stockOverview(): ResponseInterface
     {
         return $this->respondWithService(
-            fn() => $this->inventoryService->getStockOverview(
+            fn () => $this->inventoryService->getStockOverview(
                 $this->request->getGet()
             ),
             'Stock overview berhasil dimuat.'
@@ -39,7 +42,7 @@ class InventoryApiController extends ApiController
     public function batches(): ResponseInterface
     {
         return $this->respondWithService(
-            fn() => $this->inventoryService->getBatches(
+            fn () => $this->inventoryService->getBatches(
                 $this->request->getGet()
             ),
             'Daftar batch berhasil dimuat.'
@@ -53,7 +56,7 @@ class InventoryApiController extends ApiController
         }
 
         return $this->respondWithService(
-            fn() => $this->inventoryService->getBatchDetail($id),
+            fn () => $this->inventoryService->getBatchDetail($id),
             'Detail batch berhasil dimuat.'
         );
     }
@@ -64,7 +67,7 @@ class InventoryApiController extends ApiController
     public function movements(): ResponseInterface
     {
         return $this->respondWithService(
-            fn() => $this->inventoryService->getMovements(
+            fn () => $this->inventoryService->getMovements(
                 $this->request->getGet()
             ),
             'Riwayat pergerakan stok berhasil dimuat.'
@@ -92,7 +95,7 @@ class InventoryApiController extends ApiController
         }
 
         return $this->respondWithService(
-            fn() => $this->inventoryService->getFefoAllocation(
+            fn () => $this->inventoryService->getFefoAllocation(
                 $productId,
                 (float) $quantity
             ),
@@ -137,7 +140,7 @@ class InventoryApiController extends ApiController
         }
 
         return $this->respondWithService(
-            fn() => $this->inventoryService->postGoodsReceipt(
+            fn () => $this->inventoryService->postGoodsReceipt(
                 $receiptId,
                 $batchBreakdown,
                 $userId
@@ -152,7 +155,7 @@ class InventoryApiController extends ApiController
     public function stockOpnames(): ResponseInterface
     {
         return $this->respondWithService(
-            fn() => $this->inventoryService->getOpnames(
+            fn () => $this->inventoryService->getOpnames(
                 $this->request->getGet()
             ),
             'Daftar stock opname berhasil dimuat.'
@@ -172,7 +175,7 @@ class InventoryApiController extends ApiController
         }
 
         return $this->respondWithService(
-            fn() => $this->inventoryService->getOpnameDetail($id),
+            fn () => $this->inventoryService->getOpnameDetail($id),
             'Detail stock opname berhasil dimuat.'
         );
     }
@@ -198,7 +201,7 @@ class InventoryApiController extends ApiController
         }
 
         return $this->respondWithService(
-            fn() => [
+            fn () => [
                 'id' => $this->inventoryService->createStockOpname(
                     $data,
                     $userId
@@ -236,7 +239,7 @@ class InventoryApiController extends ApiController
         }
 
         return $this->respondWithService(
-            fn() => $this->inventoryService->saveStockOpnameCounts(
+            fn () => $this->inventoryService->saveStockOpnameCounts(
                 $id,
                 $data,
                 $userId
@@ -267,11 +270,142 @@ class InventoryApiController extends ApiController
         }
 
         return $this->respondWithService(
-            fn() => $this->inventoryService->postStockOpname(
+            fn () => $this->inventoryService->postStockOpname(
                 $id,
                 $userId
             ),
             'Stock opname berhasil diposting.'
+        );
+    }
+
+    /**
+ * Product Recall List
+ */
+    public function productRecalls(): ResponseInterface
+    {
+        $filters = $this->request->getGet();
+
+        $page = max(1, (int) ($filters['page'] ?? 1));
+        $perPage = max(1, min(100, (int) ($filters['per_page'] ?? 10)));
+
+        unset($filters['page'], $filters['per_page']);
+
+        return $this->respondWithRecallService(
+            fn () => $this->productRecallService->getProductRecalls(
+                $filters,
+                $page,
+                $perPage
+            ),
+            'Daftar product recall berhasil dimuat.'
+        );
+    }
+
+    /**
+     * Product Recall Detail
+     */
+    public function productRecall(int $id): ResponseInterface
+    {
+        if ($id < 1) {
+            return $this->errorResponse(
+                'Product Recall ID tidak valid.',
+                422
+            );
+        }
+
+        return $this->respondWithRecallService(
+            fn () => $this->productRecallService->getProductRecallDetail($id),
+            'Detail product recall berhasil dimuat.'
+        );
+    }
+
+    /**
+     * Create Product Recall
+     */
+    public function createProductRecall(): ResponseInterface
+    {
+        $data = $this->getJsonBody();
+
+        if ($data instanceof ResponseInterface) {
+            return $data;
+        }
+
+        $userId = $this->getAuthenticatedUserId();
+
+        if ($userId < 1) {
+            return $this->errorResponse(
+                'User tidak terautentikasi.',
+                401
+            );
+        }
+
+        return $this->respondWithRecallService(
+            fn () => [
+                'id' => $this->productRecallService->createProductRecall(
+                    $data,
+                    $userId
+                ),
+            ],
+            'Product recall berhasil dibuat.'
+        );
+    }
+
+    /**
+     * Apply Product Recall
+     */
+    public function applyProductRecall(int $id): ResponseInterface
+    {
+        if ($id < 1) {
+            return $this->errorResponse(
+                'Product Recall ID tidak valid.',
+                422
+            );
+        }
+
+        $userId = $this->getAuthenticatedUserId();
+
+        if ($userId < 1) {
+            return $this->errorResponse(
+                'User tidak terautentikasi.',
+                401
+            );
+        }
+
+        return $this->respondWithRecallService(
+            fn () => $this->productRecallService->applyProductRecall(
+                $id,
+                $userId
+            ),
+            'Product recall berhasil diterapkan.'
+        );
+    }
+
+    /**
+     * Close Product Recall
+     */
+    public function closeProductRecall(int $id): ResponseInterface
+    {
+        if ($id < 1) {
+            return $this->errorResponse(
+                'Product Recall ID tidak valid.',
+                422
+            );
+        }
+
+        $userId = $this->getAuthenticatedUserId();
+
+        if ($userId < 1) {
+            return $this->errorResponse(
+                'User tidak terautentikasi.',
+                401
+            );
+        }
+
+        return $this->respondWithRecallService(
+            fn () => $this->productRecallService->closeProductRecall(
+                $id,
+                $userId
+            ),
+            'Product recall berhasil ditutup.'
         );
     }
 
@@ -300,6 +434,36 @@ class InventoryApiController extends ApiController
         return (int) auth()->id();
     }
 
+    /**
+ * Standard product recall response handler.
+ */
+    private function respondWithRecallService(
+        callable $callback,
+        string $message
+    ): ResponseInterface {
+        try {
+            return $this->successResponse(
+                $callback(),
+                $message
+            );
+        } catch (InvalidArgumentException | RuntimeException $e) {
+            return $this->errorResponse(
+                $e->getMessage(),
+                422
+            );
+        } catch (Throwable $e) {
+            log_message(
+                'error',
+                '[InventoryApiController:ProductRecall] {message}',
+                ['message' => $e->getMessage()]
+            );
+
+            return $this->errorResponse(
+                'Terjadi kesalahan saat memproses product recall.',
+                500
+            );
+        }
+    }
     /**
      * Standard service response handler.
      */

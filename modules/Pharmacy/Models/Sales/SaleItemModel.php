@@ -8,16 +8,21 @@ use Modules\Pharmacy\Models\PharmacyModel;
 
 class SaleItemModel extends PharmacyModel
 {
-    protected $table            = 'sale_items';
-    protected $primaryKey       = 'id';
-    protected $returnType       = 'array';
-    protected $useTimestamps    = true;
+    protected $table = 'sale_items';
+
+    protected $primaryKey = 'id';
+
+    protected $returnType = 'array';
+
+    protected $useTimestamps = true;
 
     protected $allowedFields = [
         'sale_id',
         'product_id',
         'batch_id',
         'quantity',
+        'unit_id',
+        'conversion_factor',
         'unit_price',
         'discount_amount',
         'subtotal',

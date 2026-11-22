@@ -159,7 +159,6 @@ class ProductApiPosController extends ApiController
                 'categories.name AS category_name',
                 'units.name AS unit_name',
                 'units.abbreviation AS unit_abbreviation',
-                // 'stock.stock_available',
                 'COALESCE(stock.stock_available, 0) AS stock_available',
             ]);
 

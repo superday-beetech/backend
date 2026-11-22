@@ -86,77 +86,10 @@ class SalesService
             throw new InvalidArgumentException('User tidak valid.');
         }
 
-        $items = $data['items'] ?? [];
-
-        if (!is_array($items) || $items === []) {
-            throw new InvalidArgumentException('Item penjualan belum diisi.');
-        }
-
         $this->beginTransaction();
 
         try {
-            $now = date('Y-m-d H:i:s');
-
-            $customerId = $this->resolveCustomerId($data);
-
-            $saleDate = $this->normalizeDate($data['sale_date'] ?? null);
-
-            [$subtotal, $preparedItems] = $this->prepareItems($items);
-
-            $headerDiscount = round($this->numericValue($data['discount_amount'] ?? 0, 'Diskon transaksi'), 2);
-
-            $taxAmount = round($this->numericValue($data['tax_amount'] ?? 0, 'Pajak'), 2);
-
-            $this->assertNonNegative($headerDiscount, 'Diskon transaksi');
-            $this->assertNonNegative($taxAmount, 'Pajak');
-
-            if ($headerDiscount > $subtotal) {
-                throw new InvalidArgumentException('Diskon transaksi melebihi subtotal.');
-            }
-
-            $totalAmount = round($subtotal - $headerDiscount + $taxAmount, 2);
-
-            if (!is_finite($totalAmount) || $totalAmount <= 0) {
-                throw new InvalidArgumentException('Total penjualan harus lebih besar dari nol.');
-            }
-
-            $saleNumber = $this->generateSaleNumber();
-
-            $inserted = $this->db->table('sales')->insert([
-                'sale_number'      => $saleNumber,
-                'customer_id'      => $customerId,
-                'sale_date'        => $saleDate,
-                'status'           => 'draft',
-                'subtotal'         => $subtotal,
-                'discount_amount'  => $headerDiscount,
-                'tax_amount'       => $taxAmount,
-                'total_amount'     => $totalAmount,
-                'paid_amount'      => 0,
-                'amount_received'  => 0,
-                'change_amount'    => 0,
-                'settlement_mode'  => 'paid',
-                'payment_status'   => 'unpaid',
-                'payment_method'   => null,
-                'reference_number' => null,
-                'due_date'         => null,
-                'notes'            => $this->nullableString($data['notes'] ?? null),
-                'created_by'       => $userId,
-                'updated_by'       => null,
-                'created_at'       => $now,
-                'updated_at'       => $now,
-            ]);
-
-            if (!$inserted) {
-                throw new RuntimeException('Gagal membuat transaksi penjualan.');
-            }
-
-            $saleId = (int) $this->db->insertID();
-
-            if ($saleId < 1) {
-                throw new RuntimeException('ID transaksi penjualan tidak berhasil dibuat.');
-            }
-
-            $this->insertSaleItems($saleId, $preparedItems, $now);
+            $saleId = $this->createDraftInternal($data, $userId);
 
             $this->commitTransaction();
 
@@ -189,94 +122,25 @@ class SalesService
      * @throws InvalidArgumentException
      * @throws RuntimeException
      */
-    public function postSale(int $saleId, array $payment, int $userId): bool
-    {
+    public function postSale(
+        int $saleId,
+        array $payment,
+        int $userId
+    ): bool {
         if ($saleId < 1 || $userId < 1) {
-            throw new InvalidArgumentException('ID transaksi atau user tidak valid.');
+            throw new InvalidArgumentException(
+                'ID transaksi atau user tidak valid.'
+            );
         }
 
         $this->beginTransaction();
 
         try {
-            $sale = $this->lockSaleHeader($saleId);
-
-            if ($sale['status'] !== 'draft') {
-                throw new RuntimeException('Hanya transaksi draft yang dapat diposting.');
-            }
-
-            $items = $this->lockSaleItems($saleId);
-
-            if ($items === []) {
-                throw new RuntimeException('Transaksi tidak memiliki item.');
-            }
-
-            $totalAmount = round($this->numericValue($sale['total_amount'], 'Total transaksi'), 2);
-
-            if ($totalAmount <= 0) {
-                throw new InvalidArgumentException('Total transaksi harus lebih besar dari nol.');
-            }
-
-            $paidAmount = $this->resolvePaidAmount($payment, $totalAmount);
-
-            $paymentMethod = $this->resolvePaymentMethod($payment, $paidAmount);
-
-            $requestedSettlementMode = $this->resolveRequestedSettlementMode($payment);
-
-            if ($requestedSettlementMode !== 'paid') {
-                $sale = $this->ensureCreditCustomer($sale, $payment, $userId);
-            }
-
-            $settlement = $this->resolveSettlement(
-                $sale,
-                $totalAmount,
-                $paidAmount,
-                $paymentMethod,
+            $this->postSaleInternal(
+                $saleId,
                 $payment,
-                $requestedSettlementMode
+                $userId
             );
-
-            // Alokasikan stok menggunakan FEFO.
-            foreach ($items as $item) {
-                $this->allocateStock($sale, $item, $userId);
-            }
-
-            // Catat pembayaran jika ada nominal yang diterapkan.
-            if ($paidAmount > 0) {
-                $this->recordPayment(
-                    $sale,
-                    $paidAmount,
-                    $paymentMethod,
-                    $this->nullableString($payment['reference_number'] ?? null),
-                    $userId
-                );
-            }
-
-            $paymentStatus = $this->resolvePaymentStatus($totalAmount, $paidAmount);
-
-            $now = date('Y-m-d H:i:s');
-
-            $updated = $this->db->table('sales')
-                ->where('id', $saleId)
-                ->where('status', 'draft')
-                ->update([
-                    'status'           => 'posted',
-                    'paid_amount'      => $paidAmount,
-                    'amount_received'  => $settlement['amount_received'],
-                    'change_amount'    => $settlement['change_amount'],
-                    'payment_status'   => $paymentStatus,
-                    'settlement_mode'  => $settlement['settlement_mode'],
-                    'payment_method'   => $paymentMethod,
-                    'reference_number' => $this->nullableString($payment['reference_number'] ?? null),
-                    'due_date'         => $settlement['due_date'],
-                    'customer_id'      => !empty($sale['customer_id']) ? (int) $sale['customer_id'] : null,
-                    'collateral_note'  => $sale['collateral_note'] ?? null,
-                    'updated_by'       => $userId,
-                    'updated_at'       => $now,
-                ]);
-
-            if (!$updated || $this->db->affectedRows() !== 1) {
-                throw new RuntimeException('Status transaksi gagal diperbarui.');
-            }
 
             $this->commitTransaction();
 
@@ -437,7 +301,7 @@ class SalesService
 
         if (array_is_list($value)) {
             return array_map(
-                fn($item) => $this->normalizeHashValue($item),
+                fn ($item) => $this->normalizeHashValue($item),
                 $value
             );
         }
@@ -549,6 +413,11 @@ class SalesService
                 'created_at'       => $now,
                 'updated_at'       => $now,
             ]);
+            if (!$inserted) {
+                throw new RuntimeException(
+                    'Gagal membuat transaksi penjualan.'
+                );
+            }
         } catch (\CodeIgniter\Database\Exceptions\DatabaseException $e) {
             if (str_contains($e->getMessage(), 'Duplicate entry')) {
                 throw new RuntimeException('Nomor penjualan duplikat. Silakan coba lagi.');
@@ -833,7 +702,22 @@ class SalesService
         }
 
         $status = trim((string) ($filters['status'] ?? ''));
+        $allowedStatuses = [
+            'draft',
+            'held',
+            'posted',
+            'cancelled',
+        ];
 
+        if ($status !== '') {
+            if (!in_array($status, $allowedStatuses, true)) {
+                throw new InvalidArgumentException(
+                    'Filter status penjualan tidak valid.'
+                );
+            }
+
+            $builder->where('s.status', $status);
+        }
         if ($status !== '') {
             $builder->where('s.status', $status);
         }
@@ -852,7 +736,8 @@ class SalesService
                 'current_page' => $page,
                 'per_page'     => $perPage,
                 'total'        => $total,
-                'last_page'    => (int) ceil($total / $perPage),
+                // 'last_page'    => (int) ceil($total / $perPage),
+                'last_page' => max(1, (int) ceil($total / $perPage)),
             ],
         ];
     }
@@ -885,10 +770,13 @@ class SalesService
                 p.sku,
                 p.barcode,
                 pb.batch_number,
-                pb.expired_at
+                pb.expired_at,
+                u.name AS unit_name,
+                u.abbreviation AS unit_abbreviation
             ')
             ->join('products p', 'p.id = si.product_id')
             ->join('product_batches pb', 'pb.id = si.batch_id', 'left')
+            ->join('units u', 'u.id = si.unit_id')
             ->where('si.sale_id', $saleId)
             ->orderBy('si.id', 'ASC')
             ->get()
@@ -909,47 +797,84 @@ class SalesService
      * @param int $userId
      * @return void
      */
+
     private function allocateStock(array $sale, array $item, int $userId): void
     {
-        $movementDate = (new DateTimeImmutable((string) $sale['sale_date']))->format('Y-m-d H:i:s');
+        $movementDate = (new DateTimeImmutable(
+            (string) $sale['sale_date']
+        ))->format('Y-m-d H:i:s');
 
         $today = date('Y-m-d');
 
+        $conversionFactor = (float) ($item['conversion_factor'] ?? 0);
+
+        if (!is_finite($conversionFactor) || $conversionFactor <= 0) {
+            throw new RuntimeException('Faktor konversi satuan penjualan tidak valid.');
+        }
+
+        $originalQuantity = round((float) $item['quantity'], 3);
+        $originalQuantityBase = round(
+            (float) $item['quantity_base'],
+            3
+        );
+
+        $expectedQuantityBase = round(
+            $originalQuantity * $conversionFactor,
+            3
+        );
+
+        if (
+            $originalQuantity <= 0 ||
+            abs($originalQuantityBase - $expectedQuantityBase) > 0.001
+        ) {
+            throw new RuntimeException(
+                'Kuantitas penjualan dan satuan dasar tidak konsisten.'
+            );
+        }
+
         $batches = $this->db->query(
             "SELECT *
-             FROM product_batches
-             WHERE product_id = ?
-               AND status = 'available'
-               AND quantity_remaining > 0
-               AND (expired_at IS NULL OR expired_at >= ?)
-             ORDER BY
-               (expired_at IS NULL) ASC,
-               expired_at ASC,
-               id ASC
-             FOR UPDATE",
+         FROM product_batches
+         WHERE product_id = ?
+           AND status = 'available'
+           AND quantity_remaining > 0
+           AND (expired_at IS NULL OR expired_at >= ?)
+         ORDER BY
+           (expired_at IS NULL) ASC,
+           expired_at ASC,
+           id ASC
+         FOR UPDATE",
             [$item['product_id'], $today]
         )->getResultArray();
 
-        $remainingQuantity = round((float) $item['quantity'], 3);
-
-        if ($remainingQuantity <= 0) {
-            throw new RuntimeException('Jumlah produk tidak valid saat alokasi stok.');
-        }
-
-        $originalQuantity = $remainingQuantity;
+        $remainingQuantity = $originalQuantity;
 
         $originalDiscount = round((float) $item['discount_amount'], 2);
         $originalSubtotal = round((float) $item['subtotal'], 2);
-        $originalGross = round($originalSubtotal + $originalDiscount, 2);
+        $originalGross = round(
+            $originalSubtotal + $originalDiscount,
+            2
+        );
 
-        $expectedGross = round($originalQuantity * (float) $item['unit_price'], 2);
+        $expectedGross = round(
+            $originalQuantity * (float) $item['unit_price'],
+            2
+        );
 
         if (abs($originalGross - $expectedGross) > 0.001) {
-            throw new RuntimeException('Nilai bruto item tidak sesuai dengan kuantitas dan harga satuan.');
+            throw new RuntimeException(
+                'Nilai bruto item tidak sesuai dengan kuantitas dan harga satuan.'
+            );
         }
 
-        if ($originalDiscount < 0 || $originalSubtotal < 0 || $originalDiscount > $originalGross) {
-            throw new RuntimeException('Nilai diskon atau subtotal item tidak valid.');
+        if (
+            $originalDiscount < 0 ||
+            $originalSubtotal < 0 ||
+            $originalDiscount > $originalGross
+        ) {
+            throw new RuntimeException(
+                'Nilai diskon atau subtotal item tidak valid.'
+            );
         }
 
         $remainingGross = $originalGross;
@@ -963,63 +888,133 @@ class SalesService
                 break;
             }
 
-            $available = round((float) $batch['quantity_remaining'], 3);
+            // Stok batch selalu menggunakan satuan dasar.
+            $availableBase = round(
+                (float) $batch['quantity_remaining'],
+                3
+            );
 
-            if ($available <= 0) {
+            if ($availableBase <= 0) {
                 continue;
             }
 
-            $allocated = round(min($remainingQuantity, $available), 3);
+            // Konversi stok batch menjadi kapasitas satuan penjualan.
+            $maxSaleQuantity = floor(
+                (($availableBase / $conversionFactor) + 0.000000001) * 1000
+            ) / 1000;
+
+            if ($maxSaleQuantity <= 0) {
+                continue;
+            }
+
+            $allocated = round(
+                min($remainingQuantity, $maxSaleQuantity),
+                3
+            );
 
             if ($allocated <= 0) {
                 continue;
             }
 
-            $isLastAllocation = ($allocated >= $remainingQuantity);
+            // Konversi kuantitas penjualan ke satuan dasar.
+            $allocatedBase = round(
+                $allocated * $conversionFactor,
+                3
+            );
+
+            if (
+                $allocatedBase <= 0 ||
+                $allocatedBase > $availableBase + 0.000001
+            ) {
+                throw new RuntimeException(
+                    'Kuantitas alokasi batch tidak valid.'
+                );
+            }
+
+            $isLastAllocation = abs(
+                $allocated - $remainingQuantity
+            ) < 0.000001;
 
             if ($isLastAllocation) {
                 $allocatedGross = $remainingGross;
                 $allocatedDiscount = $remainingDiscount;
             } else {
-                $allocatedGross = round($originalGross * ($allocated / $originalQuantity), 2);
-                $allocatedGross = min($allocatedGross, $remainingGross);
+                $allocatedGross = round(
+                    $originalGross * ($allocated / $originalQuantity),
+                    2
+                );
 
-                $allocatedDiscount = round($originalDiscount * ($allocated / $originalQuantity), 2);
-                $allocatedDiscount = min($allocatedDiscount, $remainingDiscount);
+                $allocatedGross = min(
+                    $allocatedGross,
+                    $remainingGross
+                );
+
+                $allocatedDiscount = round(
+                    $originalDiscount * ($allocated / $originalQuantity),
+                    2
+                );
+
+                $allocatedDiscount = min(
+                    $allocatedDiscount,
+                    $remainingDiscount
+                );
             }
 
-            $allocatedSubtotal = round($allocatedGross - $allocatedDiscount, 2);
+            $allocatedSubtotal = round(
+                $allocatedGross - $allocatedDiscount,
+                2
+            );
 
-            if ($allocatedGross < 0 || $allocatedDiscount < 0 || $allocatedSubtotal < 0) {
-                throw new RuntimeException('Nilai hasil alokasi penjualan tidak valid.');
+            if (
+                $allocatedGross < 0 ||
+                $allocatedDiscount < 0 ||
+                $allocatedSubtotal < 0
+            ) {
+                throw new RuntimeException(
+                    'Nilai hasil alokasi penjualan tidak valid.'
+                );
             }
 
-            $unitCost = $this->numericValue($batch['unit_cost'], 'Harga pokok batch');
+            // Harga pokok batch menggunakan harga satuan dasar.
+            $unitCost = $this->numericValue(
+                $batch['unit_cost'],
+                'Harga pokok batch'
+            );
 
+            // Kurangi stok batch dalam satuan dasar.
             $updated = $this->db->table('product_batches')
                 ->where('id', $batch['id'])
                 ->where('status', 'available')
-                ->where('quantity_remaining >=', $allocated)
+                ->where('quantity_remaining >=', $allocatedBase)
                 ->update([
-                    'quantity_remaining' => round($available - $allocated, 3),
-                    'updated_at'         => $now,
+                    'quantity_remaining' => round(
+                        $availableBase - $allocatedBase,
+                        3
+                    ),
+                    'updated_at' => $now,
                 ]);
 
             if (!$updated || $this->db->affectedRows() !== 1) {
-                throw new RuntimeException("Gagal memperbarui stok batch ID {$batch['id']}.");
+                throw new RuntimeException(
+                    "Gagal memperbarui stok batch ID {$batch['id']}."
+                );
             }
 
+            // Detail penjualan tetap menggunakan satuan transaksi.
             $allocatedItem = [
-                'sale_id'         => $sale['id'],
-                'product_id'      => $item['product_id'],
-                'batch_id'        => $batch['id'],
-                'quantity'        => $allocated,
-                'unit_price'      => $item['unit_price'],
-                'discount_amount' => $allocatedDiscount,
-                'subtotal'        => $allocatedSubtotal,
-                'unit_cost'       => $unitCost,
-                'notes'           => $item['notes'] ?? null,
-                'updated_at'      => $now,
+                'sale_id'          => $sale['id'],
+                'product_id'       => $item['product_id'],
+                'batch_id'         => $batch['id'],
+                'unit_id'          => $item['unit_id'],
+                'conversion_factor' => $conversionFactor,
+                'quantity'         => $allocated,
+                'unit_price'       => $item['unit_price'],
+                'discount_amount'  => $allocatedDiscount,
+                'subtotal'         => $allocatedSubtotal,
+                // 'unit_cost'        => $unitCost,
+                'unit_cost' => round($unitCost * $conversionFactor, 6),
+                'notes'            => $item['notes'] ?? null,
+                'updated_at'       => $now,
             ];
 
             if ($firstAllocation) {
@@ -1029,52 +1024,80 @@ class SalesService
                     ->update($allocatedItem);
 
                 if (!$updated || $this->db->affectedRows() !== 1) {
-                    throw new RuntimeException('Gagal memperbarui item penjualan hasil alokasi stok.');
+                    throw new RuntimeException(
+                        'Gagal memperbarui item penjualan hasil alokasi stok.'
+                    );
                 }
 
                 $firstAllocation = false;
             } else {
                 $allocatedItem['created_at'] = $now;
 
-                $inserted = $this->db->table('sale_items')->insert($allocatedItem);
+                $inserted = $this->db->table('sale_items')
+                    ->insert($allocatedItem);
 
                 if (!$inserted) {
-                    throw new RuntimeException('Gagal menyimpan item penjualan hasil alokasi stok.');
+                    throw new RuntimeException(
+                        'Gagal menyimpan item penjualan hasil alokasi stok.'
+                    );
                 }
             }
 
-            $movementInserted = $this->db->table('stock_movements')->insert([
-                'product_id'     => $item['product_id'],
-                'batch_id'       => $batch['id'],
-                'movement_date'  => $movementDate,
-                'movement_type'  => 'out',
-                'reference_type' => 'sale',
-                'reference_id'   => $sale['id'],
-                'quantity_in'    => 0,
-                'quantity_out'   => $allocated,
-                'unit_cost'      => $unitCost,
-                'notes'          => 'Penjualan POS ' . $sale['sale_number'],
-                'created_by'     => $userId,
-                'created_at'     => $now,
-            ]);
+            // Pergerakan stok selalu dicatat dalam satuan dasar.
+            $movementInserted = $this->db->table('stock_movements')
+                ->insert([
+                    'product_id'     => $item['product_id'],
+                    'batch_id'       => $batch['id'],
+                    'movement_date'  => $movementDate,
+                    'movement_type'  => 'out',
+                    'reference_type' => 'sale',
+                    'reference_id'   => $sale['id'],
+                    'quantity_in'    => 0,
+                    'quantity_out'   => $allocatedBase,
+                    'unit_cost'      => $unitCost,
+                    'notes'          => 'Penjualan POS ' . $sale['sale_number'],
+                    'created_by'     => $userId,
+                    'created_at'     => $now,
+                ]);
 
             if (!$movementInserted) {
-                throw new RuntimeException('Gagal mencatat pergerakan stok.');
+                throw new RuntimeException(
+                    'Gagal mencatat pergerakan stok.'
+                );
             }
 
-            $remainingQuantity = round($remainingQuantity - $allocated, 3);
-            $remainingGross = round($remainingGross - $allocatedGross, 2);
-            $remainingDiscount = round($remainingDiscount - $allocatedDiscount, 2);
+            $remainingQuantity = round(
+                $remainingQuantity - $allocated,
+                3
+            );
+
+            $remainingGross = round(
+                $remainingGross - $allocatedGross,
+                2
+            );
+
+            $remainingDiscount = round(
+                $remainingDiscount - $allocatedDiscount,
+                2
+            );
         }
 
         if ($remainingQuantity > 0) {
-            throw new RuntimeException("Stok produk ID {$item['product_id']} tidak mencukupi.");
+            throw new RuntimeException(
+                "Stok produk ID {$item['product_id']} tidak mencukupi."
+            );
         }
 
-        if (abs($remainingGross) > 0.001 || abs($remainingDiscount) > 0.001) {
-            throw new RuntimeException('Alokasi nilai penjualan tidak konsisten.');
+        if (
+            abs($remainingGross) > 0.001 ||
+            abs($remainingDiscount) > 0.001
+        ) {
+            throw new RuntimeException(
+                'Alokasi nilai penjualan tidak konsisten.'
+            );
         }
     }
+
 
     // =========================================================
     // CREDIT CUSTOMER
@@ -1201,21 +1224,41 @@ class SalesService
         $changeAmount = 0.00;
 
         if ($paymentMethod === 'cash') {
-            $received = round($this->numericValue($payment['amount_received'] ?? 0, 'Uang diterima'), 2);
+            $received = round(
+                $this->numericValue(
+                    $payment['amount_received'] ?? 0,
+                    'Uang diterima'
+                ),
+                2
+            );
 
-            if ($received <= 0) {
+            if ($received < 0) {
+                throw new InvalidArgumentException(
+                    'Uang diterima tidak boleh negatif.'
+                );
+            }
+
+            if ($received == 0.0) {
                 $received = $paidAmount;
             }
 
             if ($received < $paidAmount) {
-                throw new InvalidArgumentException('Uang diterima kurang dari jumlah pembayaran.');
+                throw new InvalidArgumentException(
+                    'Uang diterima kurang dari jumlah pembayaran.'
+                );
             }
 
             $amountReceived = $received;
-            $changeAmount = round($amountReceived - $paidAmount, 2);
+
+            $changeAmount = round(
+                $amountReceived - $paidAmount,
+                2
+            );
 
             if ($settlementMode === 'partial' && $changeAmount > 0) {
-                throw new InvalidArgumentException('Pembayaran tunai sebagian harus sesuai dengan uang yang diterima.');
+                throw new InvalidArgumentException(
+                    'Pembayaran tunai sebagian harus sesuai dengan uang yang diterima.'
+                );
             }
         }
 
@@ -1333,6 +1376,7 @@ class SalesService
      * @param array $items
      * @return array{0: float, 1: array}
      */
+
     private function prepareItems(array $items): array
     {
         $subtotal = 0.00;
@@ -1340,25 +1384,51 @@ class SalesService
 
         foreach ($items as $item) {
             if (!is_array($item)) {
-                throw new InvalidArgumentException('Format item penjualan tidak valid.');
+                throw new InvalidArgumentException(
+                    'Format item penjualan tidak valid.'
+                );
             }
 
             $productId = (int) ($item['product_id'] ?? 0);
+            $unitId = (int) ($item['unit_id'] ?? 0);
 
-            $quantity = round($this->numericValue($item['quantity'] ?? null, 'Jumlah produk'), 3);
+            $quantity = round(
+                $this->numericValue(
+                    $item['quantity'] ?? null,
+                    'Jumlah produk'
+                ),
+                3
+            );
 
-            $unitPrice = round($this->numericValue($item['unit_price'] ?? null, 'Harga produk'), 2);
+            $unitPrice = round(
+                $this->numericValue(
+                    $item['unit_price'] ?? null,
+                    'Harga produk'
+                ),
+                2
+            );
 
-            $discount = round($this->numericValue($item['discount_amount'] ?? 0, 'Diskon item'), 2);
+            $discount = round(
+                $this->numericValue(
+                    $item['discount_amount'] ?? 0,
+                    'Diskon item'
+                ),
+                2
+            );
 
-            if ($productId < 1 || $quantity <= 0) {
-                throw new InvalidArgumentException('Produk atau jumlah penjualan tidak valid.');
+            if ($productId < 1 || $unitId < 1 || $quantity <= 0) {
+                throw new InvalidArgumentException(
+                    'Produk, satuan, atau jumlah penjualan tidak valid.'
+                );
             }
 
             if ($unitPrice < 0 || $discount < 0) {
-                throw new InvalidArgumentException('Harga atau diskon tidak valid.');
+                throw new InvalidArgumentException(
+                    'Harga atau diskon tidak valid.'
+                );
             }
 
+            // Pastikan produk aktif.
             $product = $this->db->table('products')
                 ->select('id')
                 ->where('id', $productId)
@@ -1367,13 +1437,52 @@ class SalesService
                 ->getRowArray();
 
             if (!$product) {
-                throw new InvalidArgumentException("Produk ID {$productId} tidak ditemukan atau tidak aktif.");
+                throw new InvalidArgumentException(
+                    "Produk ID {$productId} tidak ditemukan atau tidak aktif."
+                );
+            }
+
+            // Validasi satuan penjualan dari konfigurasi produk.
+            $productUnit = $this->db->table('product_units pu')
+                ->select([
+                    'pu.product_id',
+                    'pu.unit_id',
+                    'pu.conversion_factor',
+                    'u.name AS unit_name',
+                    'u.abbreviation AS unit_abbreviation',
+                ])
+                ->join('units u', 'u.id = pu.unit_id')
+                ->where('pu.product_id', $productId)
+                ->where('pu.unit_id', $unitId)
+                ->where('pu.is_active', 1)
+                ->where('pu.is_sale_unit', 1)
+                ->get()
+                ->getRowArray();
+
+            if (!$productUnit) {
+                throw new InvalidArgumentException(
+                    "Satuan penjualan tidak valid untuk produk ID {$productId}."
+                );
+            }
+
+            // Faktor konversi hanya berasal dari database.
+            $conversionFactor = (float) $productUnit['conversion_factor'];
+
+            if (
+                !is_finite($conversionFactor) ||
+                $conversionFactor <= 0
+            ) {
+                throw new RuntimeException(
+                    "Faktor konversi produk ID {$productId} tidak valid."
+                );
             }
 
             $gross = round($quantity * $unitPrice, 2);
 
             if ($discount > $gross) {
-                throw new InvalidArgumentException('Diskon item melebihi nilai penjualan.');
+                throw new InvalidArgumentException(
+                    'Diskon item melebihi nilai penjualan.'
+                );
             }
 
             $lineSubtotal = round($gross - $discount, 2);
@@ -1381,19 +1490,27 @@ class SalesService
             $subtotal += $lineSubtotal;
 
             $preparedItems[] = [
-                'product_id'      => $productId,
-                'quantity'        => $quantity,
-                'unit_price'      => $unitPrice,
-                'discount_amount' => $discount,
-                'subtotal'        => $lineSubtotal,
-                'unit_cost'       => 0,
-                'batch_id'        => null,
-                'notes'           => $this->nullableString($item['notes'] ?? null),
+                'product_id'       => $productId,
+                'unit_id'          => $unitId,
+                'conversion_factor' => $conversionFactor,
+                'quantity'         => $quantity,
+                'unit_price'       => $unitPrice,
+                'discount_amount'  => $discount,
+                'subtotal'         => $lineSubtotal,
+                'unit_cost'        => 0,
+                'batch_id'         => null,
+                'notes'            => $this->nullableString(
+                    $item['notes'] ?? null
+                ),
             ];
         }
 
-        return [round($subtotal, 2), $preparedItems];
+        return [
+            round($subtotal, 2),
+            $preparedItems,
+        ];
     }
+
 
     private function insertSaleItems(int $saleId, array $preparedItems, string $now): void
     {
@@ -1522,24 +1639,49 @@ class SalesService
             return 0.0;
         }
 
-        $subtotal = 0.0;
+        $subtotal = 0.00;
 
         foreach ($items as $item) {
             if (!is_array($item)) {
                 continue;
             }
 
-            $qty = (float) ($item['quantity'] ?? 0);
-            $price = (float) ($item['unit_price'] ?? 0);
-            $discount = (float) ($item['discount_amount'] ?? 0);
+            $quantity = round(
+                (float) ($item['quantity'] ?? 0),
+                3
+            );
 
-            $subtotal += round($qty * $price - $discount, 2);
+            $unitPrice = round(
+                (float) ($item['unit_price'] ?? 0),
+                2
+            );
+
+            $discount = round(
+                (float) ($item['discount_amount'] ?? 0),
+                2
+            );
+
+            $gross = round($quantity * $unitPrice, 2);
+
+            $lineSubtotal = round($gross - $discount, 2);
+
+            $subtotal += $lineSubtotal;
         }
 
-        $headerDiscount = (float) ($data['discount_amount'] ?? 0);
-        $taxAmount = (float) ($data['tax_amount'] ?? 0);
+        $headerDiscount = round(
+            (float) ($data['discount_amount'] ?? 0),
+            2
+        );
 
-        return round($subtotal - $headerDiscount + $taxAmount, 2);
+        $taxAmount = round(
+            (float) ($data['tax_amount'] ?? 0),
+            2
+        );
+
+        return round(
+            $subtotal - $headerDiscount + $taxAmount,
+            2
+        );
     }
 
     private function generateSaleNumber(): string
@@ -1708,26 +1850,30 @@ class SalesService
         $this->transactionStarted = true;
     }
 
+
     private function commitTransaction(): void
     {
         if (!$this->transactionStarted) {
-            throw new RuntimeException('Tidak ada transaksi database yang aktif.');
+            throw new RuntimeException(
+                'Tidak ada transaksi database yang aktif.'
+            );
         }
 
         if ($this->db->transStatus() === false) {
-            $this->transactionStarted = false;
-
-            throw new RuntimeException('Transaksi database mengalami kegagalan.');
+            throw new RuntimeException(
+                'Transaksi database mengalami kegagalan.'
+            );
         }
 
         if (!$this->db->transCommit()) {
-            $this->transactionStarted = false;
-
-            throw new RuntimeException('Gagal melakukan commit transaksi database.');
+            throw new RuntimeException(
+                'Gagal melakukan commit transaksi database.'
+            );
         }
 
         $this->transactionStarted = false;
     }
+
 
     private function rollbackTransaction(): void
     {
