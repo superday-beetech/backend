@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Modules\Procurement\Services;
 
 use Config\Database;
+use Modules\Core\Config\DatabaseConnect;
 use Modules\Master\Models\ProductModel;
 use Modules\Master\Models\SupplierModel;
 use Modules\Master\Services\ProductUnitService;
@@ -23,10 +24,13 @@ class ProcurementService
     protected PurchaseOrderModel $purchaseOrderModel;
     protected PurchaseOrderItemModel $purchaseOrderItemModel;
 
+    protected DatabaseConnect $dbGroup;
+
     public function __construct()
     {
-        $this->db = Database::connect('pharmacy');
+        $this->dbGroup = config(DatabaseConnect::class);
 
+        $this->db = Database::connect($this->dbGroup->con);
         $this->supplierModel = new SupplierModel();
         $this->productModel = new ProductModel();
         $this->productUnitService = new ProductUnitService();
