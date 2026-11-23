@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Core\Transformers;
+namespace Modules\Core\Transformers;
 
 use DateTimeInterface;
 use JsonSerializable;
