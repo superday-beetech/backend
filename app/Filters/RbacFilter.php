@@ -150,10 +150,6 @@ final class RbacFilter implements FilterInterface
             return $this->deny($request, $cfg, 'account_inactive', 403, $user);
         }
 
-        if ($accessControl->isSuperadmin((int) $user->id)) {
-            return null;
-        }
-
         foreach ($cfg->bypassGroups as $group) {
             if ($user->inGroup((string) $group)) {
                 return null;
