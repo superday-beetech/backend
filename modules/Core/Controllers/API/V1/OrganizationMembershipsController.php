@@ -201,21 +201,7 @@ class OrganizationMembershipsController extends ApiController
         }
     }
 
-    /**
-     * Mengambil payload JSON atau form request.
-     */
-    private function getRequestData(): array
-    {
-        $data = $this->request->getJSON(true);
-
-        if (is_array($data)) {
-            return $data;
-        }
-
-        $data = $this->request->getPost();
-
-        return is_array($data) ? $data : [];
-    }
+   
 
     private function jsonSuccess(
         mixed $data,
