@@ -39,10 +39,10 @@ class OrganizationUnitsController extends ApiController
         if (! $this->hasPermission('core.organization_units.view')) {
             return $this->jsonError('FORBIDDEN', 'Tidak memiliki izin melihat unit organisasi.', 403);
         }
-
-        if (! $this->organizationService->userCanAccess($userId, $id)) {
-            return $this->jsonError('ORGANIZATION_NOT_FOUND', 'Organisasi tidak ditemukan atau akses tidak tersedia.', 404);
-        }
+        /*
+                if (! $this->organizationService->userCanAccess($userId, $id)) {
+                    return $this->jsonError('ORGANIZATION_NOT_FOUND', 'Organisasi tidak ditemukan atau akses tidak tersedia.', 404);
+                } */
 
         try {
             $includeInactive = $this->request->getGet('include_inactive') === '1';
