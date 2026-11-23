@@ -32,7 +32,7 @@ use CodeIgniter\Router\RouteCollection;
 $routes->setAutoRoute(false);
 $routes->setTranslateURIDashes(false);
 
-$routes->get('/', 'Home::index');
+$routes->get('/', 'Home::index', ['filter' => 'rbac']);
 
 
 $modulesPath  = ROOTPATH . 'modules' . DIRECTORY_SEPARATOR;
@@ -41,11 +41,9 @@ $verbs        = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 
 // Filter untuk seluruh route modul. Untuk API bertoken, ganti sesuai setup
 // Shield-mu (mis. gunakan filter chain yang sudah mencakup autentikasi + RBAC).
-$webFilter = [];
-$apiFilter = [];
-$publicFilter = [];
-// $webFilter = 'rbac'; diaktifkan setelah proses berjalan benar
-// $apiFilter = 'rbac'; diaktifkan setelah proses berjalan benar
+$webFilter = 'rbac';
+$apiFilter = 'rbac';
+$publicFilter = 'rbac';
 
 // Nama (hasil kebab-case) yang tidak boleh dipakai modul.
 $reserved = [
@@ -253,12 +251,12 @@ $routes->get('health', 'HealthController::index');
 // $routes->get('erp', 'ErpSpaController::index');
 // $routes->get('erp/(:any)', 'ErpSpaController::index/$1');
 $routes->get('vite', 'Vite::index');
-$routes->get('acn', 'ErpSpaController::index');
-$routes->get('acn/login', 'ErpSpaController::index');
-$routes->get('acn/(:any)', 'ErpSpaController::index');
-$routes->get('api/v1/navigation', 'ErpApiController::index');
-$routes->get('api/v1/settings', 'ErpApiController::settings');
-$routes->post('api/v1/settings', 'ErpApiController::settings');
+$routes->get('acn', 'ErpSpaController::index', ['filter' => 'rbac']);
+$routes->get('acn/login', 'ErpSpaController::index', ['filter' => 'rbac']);
+$routes->get('acn/(:any)', 'ErpSpaController::index', ['filter' => 'rbac']);
+$routes->get('api/v1/navigation', 'ErpApiController::index', ['filter' => 'rbac']);
+$routes->get('api/v1/settings', 'ErpApiController::settings', ['filter' => 'rbac']);
+$routes->post('api/v1/settings', 'ErpApiController::settings', ['filter' => 'rbac']);
 $routes->get('uploads/products/(:segment)', 'FileController::productImage/$1');
 $routes->get('uploads/products/temp/(:segment)', 'FileController::tempImage/$1');
 
