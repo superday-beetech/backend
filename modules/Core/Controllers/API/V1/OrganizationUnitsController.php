@@ -46,7 +46,7 @@ class OrganizationUnitsController extends ApiController
         try {
             $includeInactive = $this->request->getGet('include_inactive') === '1';
 
-            return $this->jsonSuccess(
+            return $this->successResponse(
                 $this->organizationService->listUnits(
                     $userId,
                     $id,
@@ -91,7 +91,7 @@ class OrganizationUnitsController extends ApiController
             return $this->jsonError('UNIT_NOT_FOUND', 'Unit organisasi tidak ditemukan.', 404);
         }
 
-        return $this->jsonSuccess($unit, 'Detail unit organisasi berhasil diambil.');
+        return $this->successResponse($unit, 'Detail unit organisasi berhasil diambil.');
     }
 
     /**
@@ -126,7 +126,7 @@ class OrganizationUnitsController extends ApiController
                 $input
             );
 
-            return $this->jsonSuccess(
+            return $this->successResponse(
                 $this->organizationService->findUnit($id, $unitId),
                 'Unit organisasi berhasil dibuat.',
                 201
@@ -183,7 +183,7 @@ class OrganizationUnitsController extends ApiController
                 return $this->jsonError('UPDATE_FAILED', 'Unit organisasi gagal diperbarui.', 500);
             }
 
-            return $this->jsonSuccess(
+            return $this->successResponse(
                 $this->organizationService->findUnit($organizationId, $unitId),
                 'Unit organisasi berhasil diperbarui.'
             );
@@ -228,7 +228,7 @@ class OrganizationUnitsController extends ApiController
                 return $this->jsonError('DEACTIVATE_FAILED', 'Unit organisasi gagal dinonaktifkan.', 500);
             }
 
-            return $this->jsonSuccess(
+            return $this->successResponse(
                 ['id' => $unitId, 'status' => 'inactive'],
                 'Unit organisasi berhasil dinonaktifkan.'
             );
@@ -271,44 +271,5 @@ class OrganizationUnitsController extends ApiController
             $userId,
             $permission
         );
-    }
-
-
-    private function jsonSuccess(
-        mixed $data,
-        string $message,
-        int $status = 200
-    ): ResponseInterface {
-        return $this->response
-            ->setStatusCode($status)
-            ->setJSON([
-                'status'  => 'success',
-                'error'   => false,
-                'message' => $message,
-                'data'    => $data,
-            ]);
-    }
-
-    private function jsonError(
-        string $code,
-        string $message,
-        int $status,
-        array $details = []
-    ): ResponseInterface {
-        $payload = [
-            'status'  => 'error',
-            'error'   => true,
-            'message' => $message,
-            'data'    => null,
-            'code'    => $code,
-        ];
-
-        if ($details !== []) {
-            $payload['details'] = $details;
-        }
-
-        return $this->response
-            ->setStatusCode($status)
-            ->setJSON($payload);
     }
 }

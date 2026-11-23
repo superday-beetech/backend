@@ -21,13 +21,32 @@ class OrganizationMembershipsController extends ApiController
     }
 
     /**
-     * GET: Daftar membership dalam organisasi.
+     * GET /organization-memberships?organization_id=1
      */
-    public function indexMemberships(int $organizationId): ResponseInterface
+    public function index(): ResponseInterface
     {
+        if (($auth = $this->getUserId()) instanceof ResponseInterface) {
+            return $auth;
+        }
+
+        $organizationId = $this->validId(
+            $this->request->getGet('organization_id')
+        );
+
+        if ($organizationId === null) {
+            return $this->jsonError(
+                'NOT_FOUND',
+                'Organization ID wajib diisi.',
+                422
+            );
+        }
+
         try {
             $page = max(1, (int) ($this->request->getGet('page') ?? 1));
-            $perPage = max(1, (int) ($this->request->getGet('per_page') ?? 10));
+            $perPage = min(
+                100,
+                max(1, (int) ($this->request->getGet('per_page') ?? 10))
+            );
 
             $search = $this->request->getGet('q');
             $status = $this->request->getGet('status');
@@ -45,41 +64,40 @@ class OrganizationMembershipsController extends ApiController
                 'Data membership berhasil dimuat.'
             );
         } catch (Throwable $e) {
-            return $this->handleError($e);
+            return $this->handleMembershipException($e);
         }
     }
 
     /**
-     * POST: Detail membership.
-     *
-     * Body:
-     * {
-     *     "organization_id": 1,
-     *     "membership_id": 10
-     * }
+     * GET /organization-memberships/{id}?organization_id=1
      */
-    public function showMembership(): ResponseInterface
+    public function show($id = null): ResponseInterface
     {
+
+        if (($auth = $this->getUserId()) instanceof ResponseInterface) {
+            return $auth;
+        }
+
+        $membershipId = $this->validId($id);
+        $organizationId = $this->validId(
+            $this->request->getGet('organization_id')
+        );
+
+        if ($membershipId === null || $organizationId === null) {
+            return $this->jsonError(
+                'VALIDATION_ERROR',
+                'Membership ID dan Organization ID wajib valid.',
+                422
+            );
+        }
+
         try {
-            $data = $this->getRequestData();
-
-            $organizationId = (int) ($data['organization_id'] ?? 0);
-            $membershipId = (int) ($data['membership_id'] ?? 0);
-
-            if ($organizationId <= 0 || $membershipId <= 0) {
-                return $this->jsonError(
-                    'VALIDATION_ERROR',
-                    'Organization ID dan Membership ID wajib diisi.',
-                    422
-                );
-            }
-
             $membership = $this->membershipService->findForOrganization(
                 $organizationId,
                 $membershipId
             );
 
-            if (!$membership) {
+            if ($membership === null) {
                 return $this->jsonError(
                     'NOT_FOUND',
                     'Membership tidak ditemukan.',
@@ -92,18 +110,51 @@ class OrganizationMembershipsController extends ApiController
                 'Detail membership berhasil dimuat.'
             );
         } catch (Throwable $e) {
-            return $this->handleError($e);
+            return $this->handleMembershipException($e);
         }
     }
 
     /**
-     * POST: Membuat membership.
+     * POST /organization-memberships
+     *
+     * Body:
+     * {
+     *   "organization_id": 1,
+     *   "user_id": 5,
+     *   "membership_role": "member",
+     *   "unit_ids": [1, 2],
+     *   "default_unit_id": 1
+     * }
      */
-    public function createMembership(int $organizationId): ResponseInterface
+    public function create(): ResponseInterface
     {
-        try {
-            $data = $this->getRequestData();
+        if (($auth = $this->getUserId()) instanceof ResponseInterface) {
+            return $auth;
+        }
 
+        $data = $this->getRequestData();
+
+        if ($data === null) {
+            return $this->jsonError(
+                'BAD_REQUEST',
+                'Body request tidak valid atau kosong.',
+                400
+            );
+        }
+
+        $organizationId = $this->validId(
+            $data['organization_id'] ?? null
+        );
+
+        if ($organizationId === null) {
+            return $this->jsonError(
+                'VALIDATION_ERROR',
+                'Organization ID wajib diisi.',
+                422
+            );
+        }
+
+        try {
             $membershipId = $this->membershipService->create(
                 $organizationId,
                 $data
@@ -116,24 +167,63 @@ class OrganizationMembershipsController extends ApiController
 
             return $this->jsonSuccess(
                 $membership,
-                'Membership berhasil ditambahkan.',
+                'Membership berhasil dibuat.',
                 201
             );
         } catch (Throwable $e) {
-            return $this->handleError($e);
+            return $this->handleMembershipException($e);
         }
     }
 
     /**
-     * PUT: Memperbarui membership.
+     * PUT/PATCH /organization-memberships/{id}
+     *
+     * Body:
+     * {
+     *   "organization_id": 1,
+     *   "membership_role": "manager",
+     *   "unit_ids": [1, 2],
+     *   "default_unit_id": 2
+     * }
      */
-    public function updateMemberships(): ResponseInterface
+    public function update($id = null): ResponseInterface
     {
-        try {
-            $data = $this->getRequestData();
+        if (($auth = $this->getUserId()) instanceof ResponseInterface) {
+            return $auth;
+        }
 
-            $organizationId = (int) ($data['organization_id'] ?? 0);
-            $membershipId = (int) ($data['membership_id'] ?? 0);
+        $membershipId = $this->validId($id);
+        $data = $this->getRequestData();
+
+        if ($membershipId === null) {
+            return $this->jsonError(
+                'VALIDATION_ERROR',
+                'Membership ID tidak valid.',
+                422
+            );
+        }
+
+        if ($data === null) {
+            return $this->jsonError(
+                'BAD_REQUEST',
+                'Body request tidak valid atau kosong.',
+                400
+            );
+        }
+
+        $organizationId = $this->validId(
+            $data['organization_id'] ?? null
+        );
+
+        if ($organizationId === null) {
+            return $this->jsonError(
+                'VALIDATION_ERROR',
+                'Organization ID wajib diisi.',
+                422
+            );
+        }
+
+        try {
             $this->membershipService->update(
                 $organizationId,
                 $membershipId,
@@ -150,17 +240,32 @@ class OrganizationMembershipsController extends ApiController
                 'Membership berhasil diperbarui.'
             );
         } catch (Throwable $e) {
-            return $this->handleError($e);
+            return $this->handleMembershipException($e);
         }
     }
 
     /**
-     * DELETE: Menonaktifkan membership.
+     * DELETE /organization-memberships/{id}?organization_id=1
      */
-    public function deleteMembership(
-        int $organizationId,
-        int $membershipId
-    ): ResponseInterface {
+    public function delete($id = null): ResponseInterface
+    {
+        if (($auth = $this->getUserId()) instanceof ResponseInterface) {
+            return $auth;
+        }
+
+        $membershipId = $this->validId($id);
+        $organizationId = $this->validId(
+            $this->request->getGet('organization_id')
+        );
+
+        if ($membershipId === null || $organizationId === null) {
+            return $this->jsonError(
+                'VALIDATION_ERROR',
+                'Membership ID dan Organization ID wajib valid.',
+                422
+            );
+        }
+
         try {
             $this->membershipService->deactivate(
                 $organizationId,
@@ -172,18 +277,26 @@ class OrganizationMembershipsController extends ApiController
                 'Membership berhasil dinonaktifkan.'
             );
         } catch (Throwable $e) {
-            return $this->handleError($e);
+            return $this->handleMembershipException($e);
         }
     }
 
     /**
-     * GET: Daftar user dari Shield.
+     * GET /organization-memberships/index-users
      */
     public function indexUsers(): ResponseInterface
     {
+        if (($auth = $this->getUserId()) instanceof ResponseInterface) {
+            return $auth;
+        }
+
         try {
             $page = max(1, (int) ($this->request->getGet('page') ?? 1));
-            $perPage = max(1, (int) ($this->request->getGet('per_page') ?? 10));
+            $perPage = min(
+                100,
+                max(1, (int) ($this->request->getGet('per_page') ?? 10))
+            );
+
             $search = $this->request->getGet('q');
 
             $result = $this->membershipService->listUsers(
@@ -197,55 +310,16 @@ class OrganizationMembershipsController extends ApiController
                 'Daftar user berhasil dimuat.'
             );
         } catch (Throwable $e) {
-            return $this->handleError($e);
+            return $this->handleMembershipException($e);
         }
-    }
-
-   
-
-    private function jsonSuccess(
-        mixed $data,
-        string $message,
-        int $status = 200
-    ): ResponseInterface {
-        return $this->response
-            ->setStatusCode($status)
-            ->setJSON([
-                'status'  => 'success',
-                'error'   => false,
-                'message' => $message,
-                'data'    => $data,
-            ]);
-    }
-
-    private function jsonError(
-        string $code,
-        string $message,
-        int $status,
-        array $details = []
-    ): ResponseInterface {
-        $payload = [
-            'status'  => 'error',
-            'error'   => true,
-            'message' => $message,
-            'data'    => null,
-            'code'    => $code,
-        ];
-
-        if ($details !== []) {
-            $payload['details'] = $details;
-        }
-
-        return $this->response
-            ->setStatusCode($status)
-            ->setJSON($payload);
     }
 
     /**
-     * Penanganan error API.
+     * Penanganan exception Membership.
      */
-    private function handleError(Throwable $e): ResponseInterface
-    {
+    private function handleMembershipException(
+        Throwable $e
+    ): ResponseInterface {
         if ($e instanceof InvalidArgumentException) {
             return $this->jsonError(
                 'VALIDATION_ERROR',
@@ -255,34 +329,34 @@ class OrganizationMembershipsController extends ApiController
         }
 
         if ($e instanceof RuntimeException) {
-            $message = $e->getMessage();
+            $message = strtolower($e->getMessage());
 
-            if (
-                str_contains(strtolower($message), 'tidak ditemukan') ||
-                str_contains(strtolower($message), 'tidak aktif')
-            ) {
+            if (str_contains($message, 'tidak ditemukan')) {
                 return $this->jsonError(
                     'NOT_FOUND',
-                    $message,
+                    $e->getMessage(),
+                    404
+                );
+            }
+
+            if (str_contains($message, 'tidak aktif')) {
+                return $this->jsonError(
+                    'NOT_FOUND',
+                    $e->getMessage(),
                     404
                 );
             }
 
             return $this->jsonError(
-                'OPERATION_FAILED',
-                $message,
+                'BAD_REQUEST',
+                $e->getMessage(),
                 422
             );
         }
 
-        log_message('error', '[OrganizationMembershipsController] {message}', [
-            'message' => $e->getMessage(),
-        ]);
-
-        return $this->jsonError(
-            'SERVER_ERROR',
-            'Terjadi kesalahan pada server.',
-            500
+        return $this->handleException(
+            $e,
+            'Gagal memproses data membership.'
         );
     }
 }

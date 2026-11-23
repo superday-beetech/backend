@@ -6,11 +6,13 @@ namespace Modules\Core\Services;
 
 use CodeIgniter\Database\BaseConnection;
 use Config\Database;
-use InvalidArgumentException;
-use RuntimeException;
+use Modules\Core\Exceptions\DomainException;
+use App\Libraries\Pagination\Pagination;
+use App\Libraries\Pagination\PaginationRequest;
 use Throwable;
 use Modules\Core\Models\OrganizationModel;
 use Modules\Core\Models\OrganizationMembershipModel;
+use RuntimeException;
 
 class OrganizationMembershipService
 {
@@ -25,14 +27,12 @@ class OrganizationMembershipService
         $this->memberships = new OrganizationMembershipModel();
     }
 
+
+
     public function listUsers(
-        int $page = 1,
-        int $perPage = 10,
+        PaginationRequest $pagination,
         ?string $search = null
     ): array {
-        $page = max(1, $page);
-        $perPage = max(1, min(100, $perPage));
-
         $builder = $this->db->table('users')
             ->select('id, username');
 
@@ -40,36 +40,33 @@ class OrganizationMembershipService
             $builder->like('username', trim($search));
         }
 
+        // Hitung total sebelum limit dan offset.
         $total = $builder->countAllResults(false);
 
-        $items = $builder
+        $items = $pagination
+            ->apply($builder)
             ->orderBy('username', 'ASC')
-            ->limit($perPage, ($page - 1) * $perPage)
             ->get()
             ->getResultArray();
 
         return [
             'items' => $items,
-            'pagination' => [
-                'current_page' => $page,
-                'per_page' => $perPage,
-                'total' => $total,
-                'total_pages' => (int) ceil($total / $perPage),
-            ],
+            'pagination' => Pagination::make(
+                $pagination,
+                $total
+            )->toArray(),
         ];
     }
 
+
+
     public function listForOrganization(
         int $organizationId,
-        int $page = 1,
-        int $perPage = 10,
+        PaginationRequest $pagination,
         ?string $search = null,
         ?string $status = null
     ): array {
         $this->validateOrganization($organizationId);
-
-        $page = max(1, $page);
-        $perPage = max(1, min(100, $perPage));
 
         $builder = $this->db->table('core_organization_memberships m')
             ->select([
@@ -100,12 +97,14 @@ class OrganizationMembershipService
                 ->groupEnd();
         }
 
+        // Hitung total berdasarkan filter yang sudah diterapkan.
         $total = $builder->countAllResults(false);
 
-        $items = $builder
+        // Terapkan pagination dari Core Library.
+        $items = $pagination
+            ->apply($builder)
             ->orderBy('m.is_default', 'DESC')
             ->orderBy('m.id', 'DESC')
-            ->limit($perPage, ($page - 1) * $perPage)
             ->get()
             ->getResultArray();
 
@@ -118,6 +117,7 @@ class OrganizationMembershipService
             $defaultUnit = $this->findDefaultUnit($units);
 
             $item['units'] = $units;
+
             $item['unit_ids'] = array_map(
                 static fn (array $unit): int => (int) $unit['id'],
                 $units
@@ -130,18 +130,18 @@ class OrganizationMembershipService
             $item['unit_name'] = $defaultUnit['name']
                 ?? ($units[0]['name'] ?? null);
         }
+
         unset($item);
 
         return [
             'items' => $items,
-            'pagination' => [
-                'current_page' => $page,
-                'per_page' => $perPage,
-                'total' => $total,
-                'total_pages' => (int) ceil($total / $perPage),
-            ],
+            'pagination' => Pagination::make(
+                $pagination,
+                $total
+            )->toArray(),
         ];
     }
+
 
     public function findForOrganization(
         int $organizationId,
@@ -194,7 +194,7 @@ class OrganizationMembershipService
             ->first();
 
         if ($existing) {
-            throw new InvalidArgumentException(
+            throw DomainException::conflict(
                 'User sudah terdaftar dalam organisasi ini.'
             );
         }
@@ -255,7 +255,7 @@ class OrganizationMembershipService
         );
 
         if (!$membership) {
-            throw new RuntimeException('Membership tidak ditemukan.');
+            throw DomainException::notFound('Membership tidak ditemukan.');
         }
 
         $payload = $this->normalizeData($data, false);
@@ -268,7 +268,7 @@ class OrganizationMembershipService
                 ->first();
 
             if ($existing) {
-                throw new InvalidArgumentException(
+                throw DomainException::conflict(
                     'User sudah terdaftar dalam organisasi ini.'
                 );
             }
@@ -302,7 +302,7 @@ class OrganizationMembershipService
             && !$hasUnitUpdate
             && !$hasDefaultUpdate
         ) {
-            throw new InvalidArgumentException(
+            throw DomainException::notFound(
                 'Tidak ada data yang diperbarui.'
             );
         }
@@ -362,7 +362,7 @@ class OrganizationMembershipService
         }
 
         if ($membership['status'] === 'inactive') {
-            throw new InvalidArgumentException(
+            throw DomainException::notFound(
                 'Membership sudah tidak aktif.'
             );
         }
@@ -393,7 +393,7 @@ class OrganizationMembershipService
         }
 
         if ($creating && empty($payload['user_id'])) {
-            throw new InvalidArgumentException('User wajib dipilih.');
+            throw DomainException::conflict('User wajib dipilih.');
         }
 
         if (isset($payload['user_id'])) {
@@ -401,7 +401,7 @@ class OrganizationMembershipService
                 !is_numeric($payload['user_id'])
                 || (int) $payload['user_id'] <= 0
             ) {
-                throw new InvalidArgumentException('User ID tidak valid.');
+                throw DomainException::conflict('User ID tidak valid.');
             }
 
             $payload['user_id'] = (int) $payload['user_id'];
@@ -413,7 +413,7 @@ class OrganizationMembershipService
             );
 
             if ($payload['membership_role'] === '') {
-                throw new InvalidArgumentException(
+                throw DomainException::conflict(
                     'Role membership tidak boleh kosong.'
                 );
             }
@@ -429,7 +429,7 @@ class OrganizationMembershipService
                     true
                 )
             ) {
-                throw new InvalidArgumentException(
+                throw DomainException::validation(
                     'Status membership tidak valid.'
                 );
             }
@@ -453,7 +453,7 @@ class OrganizationMembershipService
     {
         if (array_key_exists('unit_ids', $data)) {
             if (!is_array($data['unit_ids'])) {
-                throw new InvalidArgumentException(
+                throw DomainException::validation(
                     'unit_ids harus berupa array.'
                 );
             }
@@ -478,7 +478,7 @@ class OrganizationMembershipService
                 || (string) (int) $value !== (string) $value
                     && !is_int($value)
             ) {
-                throw new InvalidArgumentException(
+                throw DomainException::validation(
                     'Terdapat Unit ID yang tidak valid.'
                 );
             }
@@ -506,7 +506,7 @@ class OrganizationMembershipService
             ->getResultArray();
 
         if (count($units) !== count($unitIds)) {
-            throw new InvalidArgumentException(
+            throw DomainException::validation(
                 'Satu atau lebih unit tidak valid, tidak aktif, atau bukan milik organisasi ini.'
             );
         }
@@ -525,7 +525,7 @@ class OrganizationMembershipService
             }
 
             if (!is_numeric($value) || (int) $value <= 0) {
-                throw new InvalidArgumentException(
+                throw DomainException::validation(
                     'Unit default tidak valid.'
                 );
             }
@@ -533,7 +533,7 @@ class OrganizationMembershipService
             $defaultId = (int) $value;
 
             if (!in_array($defaultId, $unitIds, true)) {
-                throw new InvalidArgumentException(
+                throw DomainException::validation(
                     'Unit default harus termasuk dalam daftar unit membership.'
                 );
             }
@@ -578,7 +578,7 @@ class OrganizationMembershipService
             $defaultUnitId !== null
             && !in_array($defaultUnitId, $unitIds, true)
         ) {
-            throw new InvalidArgumentException(
+            throw DomainException::validation(
                 'Unit default tidak termasuk dalam unit membership.'
             );
         }
@@ -675,7 +675,7 @@ class OrganizationMembershipService
     private function validateOrganization(int $organizationId): array
     {
         if ($organizationId <= 0) {
-            throw new InvalidArgumentException(
+            throw DomainException::validation(
                 'Organization ID tidak valid.'
             );
         }
