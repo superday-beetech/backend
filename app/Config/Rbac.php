@@ -2,67 +2,37 @@
 
 declare(strict_types=1);
 
-/**
- * Simpan di: app/Config/Rbac.php
- */
-
 namespace Config;
 
 use CodeIgniter\Config\BaseConfig;
 
+/**
+ * Kebijakan otorisasi/RBAC.
+ * Konfigurasi autentikasi (session/token) hanya berada di AuthPolicy.
+ */
 class Rbac extends BaseConfig
 {
-    /** Nilai override: cukup sudah login, tanpa permission spesifik. */
     public const AUTHENTICATED = '@authenticated';
 
-    /** Tujuan redirect (web) bila belum login. */
-    public string $loginRoute = 'login';
-
-    /** Prefix path API (tanpa slash). */
-    public string $apiPrefix = 'api';
-
-    /**
-     * Authenticator Shield per jenis request.
-     * API sengaja token-only: cookie session di API membuka celah CSRF.
-     */
-    public array $webAuthenticators = ['session'];
-    public array $apiAuthenticators = ['tokens'];
-
-    /**
-     * Grup yang melewati pengecekan permission (tetap harus login & tidak banned).
-     * Pakai seperlunya; sebaiknya hanya 'superadmin' (owner).
-     */
+    /** Grup yang melewati grant permission setelah status akun divalidasi. */
     public array $bypassGroups = ['superadmin'];
 
-    /**
-     * Path yang TIDAK butuh autentikasi/RBAC. Jaga sesedikit mungkin.
-     * Jangan pernah menaruh prefix modul di sini.
-     * Format: "path" atau "METHOD path". '*' = satu segmen, '**' = sisa path.
-     */
+    /** Endpoint publik yang tidak membutuhkan autentikasi maupun permission. */
     public array $publicPatterns = [
         'acn',
-        'api/v1/auth/me',
-        'api/v1/*',
-        'api/*',
         'login',
         'login/*',
         'logout',
-        'auth/*',      // aksi Shield (aktivasi/2FA)
+        'auth/*',
         'health',
-        'webhook/**',  // divalidasi WebhookSignatureFilter
+        'webhook/**',
     ];
 
-    /**
-     * Override pemetaan path -> permission untuk route yang strukturnya
-     * tidak mengikuti pola dinamis (module/controller/action).
-     * Nilai: nama permission Shield ("scope.aksi") atau self::AUTHENTICATED.
-     */
+    /** Pemetaan path -> permission untuk route non-standar. */
     public array $overrides = [
-        'GET /' => self::AUTHENTICATED, // beranda/dashboard
-        // 'GET sales-order/invoices/*/print' => 'sales-order.invoice.print',
+        'GET /' => self::AUTHENTICATED,
     ];
 
-    /** Batas panjang path dan jumlah segmen. */
-    public int $maxPathLength = 255;
-    public int $maxSegments   = 8;
+    public int $maxPathLength = 2048;
+    public int $maxSegments = 12;
 }
