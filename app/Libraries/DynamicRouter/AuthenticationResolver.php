@@ -29,7 +29,10 @@ class AuthenticationResolver
     {
         $path = trim($this->request->getUri()->getPath(), '/');
         $prefix = trim($this->policy->apiPrefix, '/');
-
+        // $request->is('api/*')
+        //   || str_contains($request->getHeaderLine('Accept'), 'application/json')
+        //   || $request->getHeaderLine('Content-Type') starts with 'application/json'
+        //   || $request->getHeaderLine('X-Requested-With') === 'XMLHttpRequest'
         return $prefix !== ''
             && (
                 $path === $prefix

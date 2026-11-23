@@ -17,7 +17,6 @@ use CodeIgniter\HTTP\RequestInterface;
 use CodeIgniter\HTTP\ResponseInterface;
 use Config\AuthPolicy;
 use Psr\Log\LoggerInterface;
-use ReflectionClass;
 use ReflectionException;
 use ReflectionMethod;
 use RuntimeException;

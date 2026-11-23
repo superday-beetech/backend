@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace App\Core;
 
-use App\Exceptions\DomainException as AppDomainException;
+use App\Enums\ApiErrorCode;
 use CodeIgniter\Database\Exceptions\DatabaseException;
-use CodeIgniter\Exceptions\InvalidArgumentException;
+use CodeIgniter\Exceptions\InvalidArgumentException as CIInvalidArgumentException;
 use CodeIgniter\HTTP\RequestInterface;
 use CodeIgniter\HTTP\ResponseInterface;
 use CodeIgniter\RESTful\ResourceController;
+use Modules\Core\Exceptions\DomainException;
+use App\Libraries\Pagination\PaginationRequest;
+use App\Libraries\Pagination\PaginationResult;
 use Psr\Log\LoggerInterface;
 use Throwable;
 
@@ -25,114 +28,282 @@ class ApiController extends ResourceController
         parent::initController($request, $response, $logger);
     }
 
-
     /**
-     * Mengambil user ID dari Shield.
+     * Mengambil user ID dari CodeIgniter Shield.
      */
     protected function getUserId(): int|ResponseInterface
     {
         $userId = (int) auth()->id();
 
         if ($userId < 1) {
-            return $this->errorResponse(
-                'User tidak terautentikasi.',
-                401
+            return $this->jsonError(
+                ApiErrorCode::UNAUTHENTICATED,
+                'User tidak terautentikasi.'
             );
         }
 
         return $userId;
     }
 
-    // ── Response helpers ─────────────────────
+    /**
+     * Mengambil parameter pagination dari HTTP Request.
+     */
+    protected function getPaginationRequest(): PaginationRequest
+    {
+        return PaginationRequest::fromArray([
+            'page'     => $this->request->getGet('page'),
+            'per_page' => $this->request->getGet('per_page'),
+        ]);
+    }
 
-    protected function successResponse(
+    /**
+     * Response sukses standar untuk data berpaginasi.
+     *
+     * @param array<int, mixed>    $items
+     * @param array<string, mixed> $extraMeta
+     */
+    protected function jsonPaginated(
+        array $items,
+        PaginationResult $pagination,
+        string $message = 'Data berhasil dimuat.',
+        int $status = 200,
+        array $extraMeta = []
+    ): ResponseInterface {
+        $meta = array_merge(
+            ['pagination' => $pagination->toArray()],
+            $extraMeta
+        );
+
+        return $this->jsonSuccess(
+            data: $items,
+            message: $message,
+            status: $status,
+            meta: $meta
+        );
+    }
+
+    /**
+     * Response sukses standar REST API.
+     */
+    protected function jsonSuccess(
         mixed $data = null,
         string $message = 'Success',
-        int $code = 200
+        int $status = 200,
+        array $meta = []
     ): ResponseInterface {
-        return $this->respond([
-            'status'  => $code,
+        $payload = [
+            'status'  => 'success',
             'error'   => false,
             'message' => $message,
             'data'    => $data,
-        ], $code);
+        ];
+
+        if ($meta !== []) {
+            $payload['meta'] = $meta;
+        }
+
+        return $this->response
+            ->setStatusCode($status)
+            ->setJSON($payload);
     }
 
+    /**
+     * Response error standar REST API.
+     */
+    protected function jsonError(
+        ApiErrorCode|string $code,
+        string $message,
+        ?int $status = null,
+        mixed $errors = null
+    ): ResponseInterface {
+        $errorCode = $code instanceof ApiErrorCode ? $code->value : $code;
+        $httpStatus = $status ?? (
+            $code instanceof ApiErrorCode ? $code->defaultHttpStatus() : 400
+        );
+
+        $payload = [
+            'status'  => 'error',
+            'error'   => true,
+            'code'    => $errorCode,
+            'message' => $message,
+            'data'    => null,
+        ];
+
+        if ($errors !== null && $errors !== []) {
+            $payload['errors'] = $errors;
+        }
+
+        return $this->response
+            ->setStatusCode($httpStatus)
+            ->setJSON($payload);
+    }
+
+    /**
+     * Kompatibilitas pemanggilan lama successResponse().
+     * Meneruskan langsung ke jsonSuccess() agar output JSON tetap seragam.
+     */
+    protected function successResponse(
+        mixed $data = null,
+        string $message = 'Success',
+        int $code = 200,
+        array $meta = []
+    ): ResponseInterface {
+        return $this->jsonSuccess(
+            data: $data,
+            message: $message,
+            status: $code,
+            meta: $meta
+        );
+    }
+
+    /**
+     * Kompatibilitas pemanggilan lama errorResponse().
+     * Memetakan HTTP status ke ApiErrorCode dan meneruskan ke jsonError().
+     */
     protected function errorResponse(
         string|array $message = 'Error',
         int $code = 400,
-        mixed $errors = null
+        mixed $errors = null,
+        ApiErrorCode|string|null $errorCode = null
     ): ResponseInterface {
-        $body = [
-            'status'  => $code,
-            'error'   => true,
-            'message' => $message,
-        ];
+        $resolvedMessage = is_array($message)
+            ? (string) (reset($message) ?: 'Error')
+            : $message;
 
-        if ($errors !== null) {
-            $body['errors'] = $errors;
-        }
+        $resolvedErrors = $errors ?? (is_array($message) ? $message : null);
 
-        return $this->respond($body, $code);
+        $resolvedCode = $errorCode ?? match ($code) {
+            400     => ApiErrorCode::BAD_REQUEST,
+            401     => ApiErrorCode::UNAUTHENTICATED,
+            403     => ApiErrorCode::FORBIDDEN,
+            404     => ApiErrorCode::NOT_FOUND,
+            409     => ApiErrorCode::CONFLICT,
+            410     => ApiErrorCode::GONE,
+            422     => ApiErrorCode::VALIDATION_ERROR,
+            429     => ApiErrorCode::TOO_MANY_REQUESTS,
+            503     => ApiErrorCode::SERVICE_UNAVAILABLE,
+            default => $code >= 500
+                ? ApiErrorCode::INTERNAL_SERVER_ERROR
+                : ApiErrorCode::DOMAIN_ERROR,
+        };
+
+        return $this->jsonError(
+            code: $resolvedCode,
+            message: $resolvedMessage,
+            status: $code,
+            errors: $resolvedErrors
+        );
     }
 
-    protected function validId($id): ?int
+    /**
+     * Validasi ID bilangan bulat positif.
+     */
+    protected function validId(mixed $id): ?int
     {
-        if (!is_scalar($id) || !ctype_digit((string) $id)) {
+        if (!is_int($id) && !is_string($id)) {
             return null;
         }
 
-        $id = (int) $id;
+        if (is_string($id) && ($id === '' || !ctype_digit($id))) {
+            return null;
+        }
 
-        return $id > 0 ? $id : null;
+        $validated = filter_var($id, FILTER_VALIDATE_INT, [
+            'options' => [
+                'min_range' => 1,
+            ],
+        ]);
+
+        return $validated !== false ? $validated : null;
     }
-    // ── Request parsing ──────────────────────
 
+    /**
+     * Mengambil data request berdasarkan Content-Type.
+     */
     protected function getRequestData(): ?array
     {
-        $contentType = $this->request->getHeaderLine('Content-Type');
+        $contentType = strtolower(
+            $this->request->getHeaderLine('Content-Type')
+        );
 
         if (str_contains($contentType, 'application/json')) {
             try {
                 $data = $this->request->getJSON(true);
+
                 return is_array($data) ? $data : null;
             } catch (Throwable) {
                 return null;
             }
         }
 
+        $method = strtolower($this->request->getMethod());
+
+        if (
+            str_contains($contentType, 'application/x-www-form-urlencoded')
+            && in_array($method, ['put', 'patch', 'delete'], true)
+        ) {
+            $data = $this->request->getRawInput();
+
+            return is_array($data) && $data !== [] ? $data : null;
+        }
+
         $data = $this->request->getPost();
+
         return $data !== [] ? $data : null;
     }
 
-    // ── Centralized exception handling ───────
-
+    /**
+     * Penanganan exception terpusat.
+     */
     protected function handleException(
         Throwable $e,
         string $fallback = 'Terjadi kesalahan pada server.'
     ): ResponseInterface {
-        if ($e instanceof AppDomainException) {
-            return $this->errorResponse(
+        // 1. Exception aturan bisnis / domain aplikasi.
+        if ($e instanceof DomainException) {
+            return $this->jsonError(
+                $e->getErrorCode(),
                 $e->getMessage(),
-                $e->getStatusCode(),
-                $e->getErrors()
+                status: $e->getStatusCode(),
+                errors: $e->getErrors()
             );
         }
 
-        if ($e instanceof InvalidArgumentException) {
-            return $this->errorResponse(
-                'VALIDATION_ERROR',
-                422,
-                [$e->getMessage()]
+        // 2. Exception validasi CodeIgniter & PHP global.
+        if ($e instanceof CIInvalidArgumentException || $e instanceof \InvalidArgumentException) {
+            return $this->jsonError(
+                ApiErrorCode::VALIDATION_ERROR,
+                $e->getMessage()
             );
         }
 
+        // 3. Kesalahan database.
         if ($e instanceof DatabaseException) {
-            log_message('error', '[DB] ' . $e->getMessage());
-            return $this->errorResponse($fallback, 500);
+            log_message(
+                'error',
+                '[DATABASE ERROR] {message}',
+                ['message' => $e->getMessage()]
+            );
+
+            return $this->jsonError(
+                ApiErrorCode::DATABASE_ERROR,
+                $fallback
+            );
         }
 
-        log_message('error', '[' . static::class . '] ' . $e->getMessage());
-        return $this->errorResponse($fallback, 500);
+        // 4. Kesalahan tak terduga.
+        log_message(
+            'error',
+            '[API ERROR] {class}: {message}',
+            [
+                'class'   => $e::class,
+                'message' => $e->getMessage(),
+            ]
+        );
+
+        return $this->jsonError(
+            ApiErrorCode::INTERNAL_SERVER_ERROR,
+            $fallback
+        );
     }
 }
