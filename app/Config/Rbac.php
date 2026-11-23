@@ -20,6 +20,8 @@ class Rbac extends BaseConfig
     /** Endpoint publik yang tidak membutuhkan autentikasi maupun permission. */
     public array $publicPatterns = [
         'acn',
+        'acn/**',
+        'POST api/v1/auth/login',
         'login',
         'login/*',
         'logout',
