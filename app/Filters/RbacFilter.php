@@ -11,7 +11,7 @@ declare(strict_types=1);
  * Alur:
  *  1. Normalisasi & validasi path (tolak ../, %, //, karakter aneh).
  *  2. Path publik (Config\Rbac::$publicPatterns) -> lolos.
- *  3. Autentikasi via Shield (web: session, API: token).
+ *  3. Autentikasi melalui AuthenticationResolver (web/API: sesuai AuthPolicy).
  *  4. User banned -> ditolak + logout (revoke langsung, bukan menunggu session habis).
  *  5. Grup bypass (superadmin) -> lolos.
  *  6. Path -> permission:
@@ -38,6 +38,8 @@ use CodeIgniter\HTTP\IncomingRequest;
 use CodeIgniter\HTTP\RequestInterface;
 use CodeIgniter\HTTP\ResponseInterface;
 use CodeIgniter\Shield\Entities\User;
+use App\Libraries\DynamicRouter\AuthenticationResolver;
+use Config\AuthPolicy;
 use Config\Rbac as RbacConfig;
 use LogicException;
 use Throwable;
@@ -127,7 +129,7 @@ final class RbacFilter implements FilterInterface
         }
 
         $isApi = $this->isApiPath($path, $cfg);
-        $user  = $this->resolveUser($isApi ? $cfg->apiAuthenticators : $cfg->webAuthenticators);
+        $user  = $this->resolveUser($request);
 
 
         if ($user === null) {
@@ -138,6 +140,18 @@ final class RbacFilter implements FilterInterface
             $this->logout();
 
             return $this->deny($request, $cfg, 'account_banned', 403, $user);
+        }
+
+        // Status akun wajib divalidasi sebelum bypass maupun override.
+        $accessControl = service('accessControl');
+
+        if (! $accessControl->isActiveUser((int) $user->id)) {
+            $this->logout();
+            return $this->deny($request, $cfg, 'account_inactive', 403, $user);
+        }
+
+        if ($accessControl->isSuperadmin((int) $user->id)) {
+            return null;
         }
 
         foreach ($cfg->bypassGroups as $group) {
@@ -169,19 +183,6 @@ final class RbacFilter implements FilterInterface
             return $this->deny($request, $cfg, 'no_policy', 403, $user);
         }
 
-        // di authorize(), ganti bagian bypass dan pengecekan permission:
-        $accessControl = service('accessControl');
-
-        if (! $accessControl->isActiveUser((int) $user->id)) {
-            $this->logout();
-            return $this->deny($request, $cfg, 'account_inactive', 403, $user);
-        }
-
-        if ($accessControl->isSuperadmin((int) $user->id)) {
-            return null;
-        }
-
-        // ...
         if ($accessControl->hasAllPermissions((int) $user->id, $permissions)) {
             return null;
         }
@@ -216,7 +217,7 @@ final class RbacFilter implements FilterInterface
         $safe     = static fn(?string $s): bool => $s !== null && preg_match('/^[a-z0-9_-]+$/', $s) === 1;
 
         // api/v1/{module}/{resource}[/{id}]
-        if ($segments[0] === $cfg->apiPrefix) {
+        if ($segments[0] === trim(config(AuthPolicy::class)->apiPrefix, '/')) {
             $ability = self::ABILITY[$method] ?? null;
 
             if ($ability === null || count($segments) < 4 || preg_match('/^v\d+$/', $segments[1]) !== 1) {
@@ -246,26 +247,17 @@ final class RbacFilter implements FilterInterface
     // AUTENTIKASI
     // ============================================================
 
-    /** @param list<string> $aliases */
-    private function resolveUser(array $aliases): ?User
+    /**
+     * Semua jalur autentikasi menggunakan resolver yang sama dengan DynamicRouter.
+     */
+    private function resolveUser(IncomingRequest $request): ?User
     {
-        foreach ($aliases as $alias) {
-            try {
-                $auth = auth($alias);
+        $resolver = new AuthenticationResolver(
+            $request,
+            config(AuthPolicy::class)
+        );
 
-                if ($auth->loggedIn()) {
-                    $user = $auth->user();
-
-                    if ($user !== null) {
-                        return $user;
-                    }
-                }
-            } catch (Throwable $e) {
-                log_message('warning', "[RBAC] authenticator '{$alias}' gagal: " . $e->getMessage());
-            }
-        }
-
-        return null;
+        return $resolver->getAuthenticatedUser();
     }
 
     private function logout(): void
@@ -279,9 +271,9 @@ final class RbacFilter implements FilterInterface
 
     private function unauthenticated(IncomingRequest $request, RbacConfig $cfg, string $method): ResponseInterface
     {
-        /*  if ($this->wantsJson($request, $cfg)) {
+        if ($this->wantsJson($request, $cfg)) {
             return $this->deny($request, $cfg, 'unauthenticated', 401);
-        } */
+        }
 
         if ($method === 'GET') {
             try {
@@ -293,7 +285,7 @@ final class RbacFilter implements FilterInterface
 
         log_message('debug', '[RBAC] belum login -> redirect login');
 
-        return redirect()->to(site_url($cfg->loginRoute));
+        return redirect()->to(site_url(config(AuthPolicy::class)->loginRoute));
     }
 
     // ============================================================
@@ -338,7 +330,9 @@ final class RbacFilter implements FilterInterface
 
     private function isApiPath(string $path, RbacConfig $cfg): bool
     {
-        return $path === $cfg->apiPrefix || str_starts_with($path, $cfg->apiPrefix . '/');
+        $prefix = trim(config(AuthPolicy::class)->apiPrefix, '/');
+
+        return $path === $prefix || str_starts_with($path, $prefix . '/');
     }
 
     /**
@@ -388,11 +382,7 @@ final class RbacFilter implements FilterInterface
             ->setStatusCode($status)
             ->setHeader('Cache-Control', 'no-store');
 
-        if ($status === 401) {
-            $response->setHeader('WWW-Authenticate', 'Bearer realm="api"');
-        }
-
-        if ($this->wantsJson($request, $cfg)) {
+                if ($this->wantsJson($request, $cfg)) {
             $body = ['status' => false, 'message' => $message];
 
             // Detail hanya di non-production untuk memudahkan debugging.
