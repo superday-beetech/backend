@@ -510,11 +510,14 @@ class AccessChecker
             return true;
         }
 
+        // Rbac::publicPatterns berisi pola PATH, bukan nama method controller.
+        $requestPath = trim($this->request->getUri()->getPath(), '/');
+
         foreach ($this->policy->publicPatterns as $pattern) {
             if (
                 is_string($pattern)
                 && $this->matchesPolicyPattern(
-                    $endpoint,
+                    $requestPath,
                     $pattern,
                     $httpVerb
                 )
@@ -531,13 +534,16 @@ class AccessChecker
         string $endpoint,
         string $httpVerb
     ): ?string {
+        // RBAC overrides menggunakan URL path, konsisten dengan Config\Rbac.
+        $requestPath = trim($this->request->getUri()->getPath(), '/');
+
         foreach ($this->policy->overrides as $pattern => $permission) {
             if (! is_string($pattern) || ! is_string($permission)) {
                 continue;
             }
 
             if (! $this->matchesPolicyPattern(
-                $endpoint,
+                $requestPath,
                 $pattern,
                 $httpVerb
             )) {
