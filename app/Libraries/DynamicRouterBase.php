@@ -16,6 +16,7 @@ use CodeIgniter\Exceptions\PageNotFoundException;
 use CodeIgniter\HTTP\RequestInterface;
 use CodeIgniter\HTTP\ResponseInterface;
 use Config\AuthPolicy;
+use Config\Rbac;
 use Psr\Log\LoggerInterface;
 use ReflectionException;
 use ReflectionMethod;
@@ -40,6 +41,7 @@ abstract class DynamicRouterBase extends Controller
     private const RELAXABLE_ENVIRONMENTS = ['development', 'testing'];
 
     protected AuthPolicy $authPolicy;
+    protected Rbac $rbacPolicy;
 
     protected string $moduleFolder = '';
     protected string $moduleNamespace = '';
@@ -111,6 +113,7 @@ abstract class DynamicRouterBase extends Controller
         // 1. Muat konfigurasi sebelum helper dibuat.
         $this->loadRouterConfig();
         $this->authPolicy = config(AuthPolicy::class);
+        $this->rbacPolicy = config(Rbac::class);
         // 2. Scan controller.
         $this->controllerScanner = new ControllerScanner($this->moduleFolder, $this->moduleNamespace);
         $this->scanControllersAndMethods();
@@ -137,7 +140,7 @@ abstract class DynamicRouterBase extends Controller
             $this->authenticationResolver,
             $this->moduleFolder,
             $this->publicMethods,
-            $this->authPolicy
+            $this->rbacPolicy
         );
 
         // 7. HTTP verb.
@@ -184,7 +187,7 @@ abstract class DynamicRouterBase extends Controller
     {
 
         $path = trim($this->request->getUri()->getPath(), '/');
-        $policy = $this->authPolicy;
+        $policy = $this->rbacPolicy;
         if (strlen($path) > $policy->maxPathLength) {
             $this->rejectAsNotFound('path_policy', 'PATH_TOO_LONG', ['length' => strlen($path)]);
         }
