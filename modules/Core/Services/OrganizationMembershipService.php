@@ -15,25 +15,18 @@ use Modules\Core\Models\OrganizationMembershipModel;
 class OrganizationMembershipService
 {
     private BaseConnection $db;
-
     private OrganizationModel $organizations;
-
     private OrganizationUnitModel $units;
-
     private OrganizationMembershipModel $memberships;
 
     public function __construct()
     {
         $this->db = Database::connect();
-
         $this->organizations = new OrganizationModel();
         $this->units = new OrganizationUnitModel();
         $this->memberships = new OrganizationMembershipModel();
     }
 
-    /**
-     * Daftar user dari CodeIgniter Shield.
-     */
     public function listUsers(
         int $page = 1,
         int $perPage = 10,
@@ -68,10 +61,6 @@ class OrganizationMembershipService
         ];
     }
 
-    /**
-     * Daftar membership dalam satu organisasi.
-     */
-
     public function listForOrganization(
         int $organizationId,
         int $page = 1,
@@ -90,21 +79,14 @@ class OrganizationMembershipService
                 'm.id',
                 'm.organization_id',
                 'm.user_id',
-                'm.unit_id',
                 'm.membership_role',
                 'm.status',
                 'm.is_default',
                 'm.created_at',
                 'm.updated_at',
                 'u.username',
-                'ou.name AS unit_name',
             ])
             ->join('users u', 'u.id = m.user_id', 'left')
-            ->join(
-                'core_organization_units ou',
-                'ou.id = m.unit_id',
-                'left'
-            )
             ->where('m.organization_id', $organizationId);
 
         if ($status !== null && $status !== '') {
@@ -118,7 +100,6 @@ class OrganizationMembershipService
                 ->like('u.username', $keyword)
                 ->orLike('m.membership_role', $keyword)
                 ->orLike('m.user_id', $keyword)
-                ->orLike('ou.name', $keyword)
                 ->groupEnd();
         }
 
@@ -131,6 +112,21 @@ class OrganizationMembershipService
             ->get()
             ->getResultArray();
 
+        foreach ($items as &$item) {
+            $units = $this->getMembershipUnits((int) $item['id']);
+
+            $item['units'] = $units;
+            $defaultUnit = $this->findDefaultUnit($units);
+
+            // Kompatibilitas respons lama.
+            $item['unit_id'] = $defaultUnit['id']
+                ?? ($units[0]['id'] ?? null);
+
+            $item['unit_name'] = $defaultUnit['name']
+                ?? ($units[0]['name'] ?? null);
+        }
+        unset($item);
+
         return [
             'items' => $items,
             'pagination' => [
@@ -142,10 +138,6 @@ class OrganizationMembershipService
         ];
     }
 
-
-    /**
-     * Detail membership dalam satu organisasi.
-     */
     public function findForOrganization(
         int $organizationId,
         int $membershipId
@@ -157,24 +149,34 @@ class OrganizationMembershipService
             ->where('id', $membershipId)
             ->first();
 
-        return $membership ?: null;
+        if (!$membership) {
+            return null;
+        }
+
+        $units = $this->getMembershipUnits($membershipId);
+        $defaultUnit = $this->findDefaultUnit($units);
+
+        $membership['units'] = $units;
+        $membership['unit_ids'] = array_map(
+            static fn (array $unit): int => (int) $unit['id'],
+            $units
+        );
+
+        // Kompatibilitas respons lama.
+        $membership['unit_id'] = $defaultUnit['id']
+            ?? ($units[0]['id'] ?? null);
+
+        return $membership;
     }
 
-    /**
-     * Membuat membership baru.
-     */
-    public function create(
-        int $organizationId,
-        array $data
-    ): int {
+    public function create(int $organizationId, array $data): int
+    {
         $this->validateOrganization($organizationId);
 
         $payload = $this->normalizeData($data, true);
+        $unitIds = $this->extractUnitIds($data);
 
-        $this->validateUnit(
-            $organizationId,
-            $payload['unit_id']
-        );
+        $this->validateUnits($organizationId, $unitIds);
 
         $existing = $this->memberships
             ->where('organization_id', $organizationId)
@@ -189,20 +191,31 @@ class OrganizationMembershipService
 
         $payload['organization_id'] = $organizationId;
 
+        $defaultUnitId = $this->resolveDefaultUnitId(
+            $data,
+            $unitIds,
+            null
+        );
+
         $this->db->transBegin();
 
         try {
             $membershipId = $this->memberships->insert($payload);
 
             if ($membershipId === false) {
-                throw new RuntimeException(
-                    $this->getModelErrors()
-                );
+                throw new RuntimeException($this->getModelErrors());
             }
+
+            $this->syncUnits(
+                (int) $membershipId,
+                $organizationId,
+                $unitIds,
+                $defaultUnitId
+            );
 
             if ($this->db->transStatus() === false) {
                 throw new RuntimeException(
-                    'Gagal menyimpan membership.'
+                    'Gagal menyimpan membership dan unit.'
                 );
             }
 
@@ -215,9 +228,6 @@ class OrganizationMembershipService
         }
     }
 
-    /**
-     * Memperbarui membership.
-     */
     public function update(
         int $organizationId,
         int $membershipId,
@@ -231,17 +241,10 @@ class OrganizationMembershipService
         );
 
         if (!$membership) {
-            throw new RuntimeException(
-                'Membership tidak ditemukan.'
-            );
+            throw new RuntimeException('Membership tidak ditemukan.');
         }
 
         $payload = $this->normalizeData($data, false);
-
-        $this->validateUnit(
-            $organizationId,
-            $payload['unit_id'] ?? $membership['unit_id']
-        );
 
         if (isset($payload['user_id'])) {
             $existing = $this->memberships
@@ -257,7 +260,25 @@ class OrganizationMembershipService
             }
         }
 
-        if (empty($payload)) {
+        $hasUnitUpdate = array_key_exists('unit_ids', $data)
+            || array_key_exists('unit_id', $data);
+
+        $unitIds = $hasUnitUpdate
+            ? $this->extractUnitIds($data)
+            : array_map(
+                static fn (array $unit): int => (int) $unit['id'],
+                $membership['units'] ?? []
+            );
+
+        $this->validateUnits($organizationId, $unitIds);
+
+        $defaultUnitId = $this->resolveDefaultUnitId(
+            $data,
+            $unitIds,
+            $membership['units'] ?? []
+        );
+
+        if ($payload === [] && !$hasUnitUpdate) {
             throw new InvalidArgumentException(
                 'Tidak ada data yang diperbarui.'
             );
@@ -266,14 +287,32 @@ class OrganizationMembershipService
         $this->db->transBegin();
 
         try {
-            $updated = $this->memberships->update(
-                $membershipId,
-                $payload
-            );
+            if ($payload !== []) {
+                $updated = $this->memberships->update(
+                    $membershipId,
+                    $payload
+                );
 
-            if (!$updated) {
-                throw new RuntimeException(
-                    $this->getModelErrors()
+                if (!$updated) {
+                    throw new RuntimeException($this->getModelErrors());
+                }
+            }
+
+            if ($hasUnitUpdate) {
+                $this->syncUnits(
+                    $membershipId,
+                    $organizationId,
+                    $unitIds,
+                    $defaultUnitId
+                );
+            } elseif (
+                array_key_exists('default_unit_id', $data)
+            ) {
+                $this->syncUnits(
+                    $membershipId,
+                    $organizationId,
+                    $unitIds,
+                    $defaultUnitId
                 );
             }
 
@@ -292,9 +331,6 @@ class OrganizationMembershipService
         }
     }
 
-    /**
-     * Menonaktifkan membership.
-     */
     public function deactivate(
         int $organizationId,
         int $membershipId
@@ -307,9 +343,7 @@ class OrganizationMembershipService
         );
 
         if (!$membership) {
-            throw new RuntimeException(
-                'Membership tidak ditemukan.'
-            );
+            throw new RuntimeException('Membership tidak ditemukan.');
         }
 
         if ($membership['status'] === 'inactive') {
@@ -324,16 +358,10 @@ class OrganizationMembershipService
         );
     }
 
-    /**
-     * Normalisasi dan validasi payload.
-     */
-    private function normalizeData(
-        array $data,
-        bool $creating
-    ): array {
+    private function normalizeData(array $data, bool $creating): array
+    {
         $allowedFields = [
             'user_id',
-            'unit_id',
             'membership_role',
             'status',
             'is_default',
@@ -348,34 +376,15 @@ class OrganizationMembershipService
         }
 
         if ($creating && empty($payload['user_id'])) {
-            throw new InvalidArgumentException(
-                'User wajib dipilih.'
-            );
+            throw new InvalidArgumentException('User wajib dipilih.');
         }
 
         if (isset($payload['user_id'])) {
             $payload['user_id'] = (int) $payload['user_id'];
 
             if ($payload['user_id'] <= 0) {
-                throw new InvalidArgumentException(
-                    'User ID tidak valid.'
-                );
+                throw new InvalidArgumentException('User ID tidak valid.');
             }
-        }
-
-        if (array_key_exists('unit_id', $payload)) {
-            $payload['unit_id'] = $payload['unit_id'] !== null
-                && $payload['unit_id'] !== ''
-                ? (int) $payload['unit_id']
-                : null;
-
-            if ($payload['unit_id'] !== null && $payload['unit_id'] <= 0) {
-                throw new InvalidArgumentException(
-                    'Unit ID tidak valid.'
-                );
-            }
-        } elseif ($creating) {
-            $payload['unit_id'] = null;
         }
 
         if (isset($payload['membership_role'])) {
@@ -415,8 +424,182 @@ class OrganizationMembershipService
     }
 
     /**
-     * Memastikan organisasi tersedia.
+     * Terima format baru unit_ids dan format lama unit_id.
      */
+    private function extractUnitIds(array $data): array
+    {
+        if (array_key_exists('unit_ids', $data)) {
+            if (!is_array($data['unit_ids'])) {
+                throw new InvalidArgumentException(
+                    'unit_ids harus berupa array.'
+                );
+            }
+
+            $values = $data['unit_ids'];
+        } elseif (
+            array_key_exists('unit_id', $data)
+            && $data['unit_id'] !== null
+            && $data['unit_id'] !== ''
+        ) {
+            $values = [$data['unit_id']];
+        } else {
+            $values = [];
+        }
+
+        $ids = [];
+
+        foreach ($values as $value) {
+            if (!is_numeric($value) || (int) $value <= 0) {
+                throw new InvalidArgumentException(
+                    'Terdapat Unit ID yang tidak valid.'
+                );
+            }
+
+            $ids[] = (int) $value;
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    private function validateUnits(
+        int $organizationId,
+        array $unitIds
+    ): void {
+        if ($unitIds === []) {
+            return;
+        }
+
+        $units = $this->db->table('core_organization_units')
+            ->where('organization_id', $organizationId)
+            ->where('status', 'active')
+            ->where('deleted_at', null)
+            ->whereIn('id', $unitIds)
+            ->get()
+            ->getResultArray();
+
+        if (count($units) !== count($unitIds)) {
+            throw new InvalidArgumentException(
+                'Satu atau lebih unit tidak valid, tidak aktif, atau bukan milik organisasi ini.'
+            );
+        }
+    }
+
+    private function resolveDefaultUnitId(
+        array $data,
+        array $unitIds,
+        ?array $existingUnits
+    ): ?int {
+        if (array_key_exists('default_unit_id', $data)) {
+            $value = $data['default_unit_id'];
+
+            if ($value === null || $value === '') {
+                return null;
+            }
+
+            $defaultId = (int) $value;
+
+            if (!in_array($defaultId, $unitIds, true)) {
+                throw new InvalidArgumentException(
+                    'Unit default harus termasuk dalam daftar unit membership.'
+                );
+            }
+
+            return $defaultId;
+        }
+
+        if (array_key_exists('unit_id', $data) && !array_key_exists('unit_ids', $data)) {
+            return $unitIds[0] ?? null;
+        }
+
+        if (count($unitIds) === 1) {
+            return $unitIds[0];
+        }
+
+        if ($existingUnits !== null) {
+            foreach ($existingUnits as $unit) {
+                if (
+                    (int) ($unit['is_default'] ?? 0) === 1
+                    && in_array((int) $unit['id'], $unitIds, true)
+                ) {
+                    return (int) $unit['id'];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function syncUnits(
+        int $membershipId,
+        int $organizationId,
+        array $unitIds,
+        ?int $defaultUnitId
+    ): void {
+        $this->validateUnits($organizationId, $unitIds);
+
+        $this->db->table('core_organization_membership_units')
+            ->where('membership_id', $membershipId)
+            ->delete();
+
+        if ($unitIds === []) {
+            return;
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $rows = [];
+
+        foreach ($unitIds as $unitId) {
+            $rows[] = [
+                'membership_id' => $membershipId,
+                'organization_unit_id' => $unitId,
+                'is_default' => $defaultUnitId === $unitId ? 1 : 0,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+
+        if (!$this->db->table('core_organization_membership_units')->insertBatch($rows)) {
+            throw new RuntimeException(
+                'Gagal menyimpan relasi unit membership.'
+            );
+        }
+    }
+
+    private function getMembershipUnits(int $membershipId): array
+    {
+        return $this->db->table('core_organization_membership_units mu')
+            ->select([
+                'ou.id',
+                'ou.code',
+                'ou.name',
+                'ou.unit_type',
+                'mu.is_default',
+            ])
+            ->join(
+                'core_organization_units ou',
+                'ou.id = mu.organization_unit_id',
+                'inner'
+            )
+            ->where('mu.membership_id', $membershipId)
+            ->where('ou.status', 'active')
+            ->where('ou.deleted_at', null)
+            ->orderBy('mu.is_default', 'DESC')
+            ->orderBy('ou.name', 'ASC')
+            ->get()
+            ->getResultArray();
+    }
+
+    private function findDefaultUnit(array $units): ?array
+    {
+        foreach ($units as $unit) {
+            if ((int) $unit['is_default'] === 1) {
+                return $unit;
+            }
+        }
+
+        return null;
+    }
+
     private function validateOrganization(int $organizationId): array
     {
         if ($organizationId <= 0) {
@@ -436,43 +619,11 @@ class OrganizationMembershipService
         return $organization;
     }
 
-    /**
-     * Memastikan unit termasuk dalam organisasi yang dipilih.
-     */
-    private function validateUnit(
-        int $organizationId,
-        ?int $unitId
-    ): void {
-        if ($unitId === null) {
-            return;
-        }
-
-        $unit = $this->units->find($unitId);
-
-        if (
-            !$unit ||
-            (int) $unit['organization_id'] !== $organizationId
-        ) {
-            throw new InvalidArgumentException(
-                'Unit organisasi tidak valid.'
-            );
-        }
-
-        if ($unit['status'] !== 'active') {
-            throw new InvalidArgumentException(
-                'Unit organisasi tidak aktif.'
-            );
-        }
-    }
-
-    /**
-     * Mengambil pesan validasi model.
-     */
     private function getModelErrors(): string
     {
         $errors = $this->memberships->errors();
 
-        return !empty($errors)
+        return $errors !== []
             ? implode(' ', $errors)
             : 'Terjadi kesalahan saat menyimpan membership.';
     }

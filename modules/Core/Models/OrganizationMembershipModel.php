@@ -18,7 +18,6 @@ class OrganizationMembershipModel extends Model
     protected $allowedFields = [
         'organization_id',
         'user_id',
-        'unit_id',
         'membership_role',
         'status',
         'is_default',
