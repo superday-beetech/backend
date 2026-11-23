@@ -1,3 +1,4 @@
+
 <?php
 
 declare(strict_types=1);
@@ -18,6 +19,7 @@ class OrganizationMembershipModel extends Model
     protected $allowedFields = [
         'organization_id',
         'user_id',
+        'unit_id',
         'membership_role',
         'status',
         'is_default',
@@ -26,7 +28,9 @@ class OrganizationMembershipModel extends Model
     protected $validationRules = [
         'organization_id' => 'required|is_natural_no_zero',
         'user_id'         => 'required|is_natural_no_zero',
+        'unit_id'         => 'permit_empty|is_natural_no_zero',
         'membership_role' => 'required|max_length[50]',
         'status'          => 'required|in_list[active,inactive]',
+        'is_default'      => 'permit_empty|in_list[0,1]',
     ];
 }
