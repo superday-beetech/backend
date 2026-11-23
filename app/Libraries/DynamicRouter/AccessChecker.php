@@ -5,21 +5,21 @@ declare(strict_types=1);
 namespace App\Libraries\DynamicRouter;
 
 use CodeIgniter\HTTP\RequestInterface;
-use Config\AuthPolicy;
+use Config\Rbac;
 use Throwable;
 
 class AccessChecker
 {
-    private AuthPolicy $policy;
+    private Rbac $policy;
 
     public function __construct(
         private RequestInterface $request,
         private AuthenticationResolver $authenticationResolver,
         private string $module,
         private array $publicMethods = [],
-        ?AuthPolicy $policy = null
+        ?Rbac $policy = null
     ) {
-        $this->policy = $policy ?? config(AuthPolicy::class);
+        $this->policy = $policy ?? config(Rbac::class);
     }
 
     /**
@@ -268,7 +268,7 @@ class AccessChecker
 
         if ($override !== null) {
             // Cukup login dan akun aktif.
-            if ($override === AuthPolicy::AUTHENTICATED) {
+            if ($override === Rbac::AUTHENTICATED) {
                 return $this->decision(
                     true,
                     'authenticated_access_granted',
