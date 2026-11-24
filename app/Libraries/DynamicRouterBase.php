@@ -122,7 +122,9 @@ abstract class DynamicRouterBase extends Controller
         $this->methodPolicy = new MethodPolicy(
             $this->discoveredMethods,
             $this->allowedMethods,
+            $this->moduleFolder
         );
+
         // 4. Resolver route.
         $this->routeResolver = new RouteResolver(
             $request,
@@ -147,7 +149,8 @@ abstract class DynamicRouterBase extends Controller
         $this->httpVerbPolicy = new HttpVerbPolicy(
             $request,
             $this->allowedHttpVerbs,
-            $this->httpVerbExclusions
+            $this->httpVerbExclusions,
+            $this->moduleFolder
         );
 
         // 8. Rate limit.
