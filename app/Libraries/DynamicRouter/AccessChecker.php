@@ -568,7 +568,7 @@ class AccessChecker
     {
         $groups = array_values(array_filter(
             $this->policy->bypassGroups,
-            static fn($group): bool =>
+            static fn ($group): bool =>
             is_string($group) && trim($group) !== ''
         ));
 
