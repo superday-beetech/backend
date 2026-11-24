@@ -31,7 +31,7 @@ class ModuleScannerService
 
     public function scan(): array
     {
-        $modulesPath = ROOTPATH . 'Modules';
+        $modulesPath = ROOTPATH . 'modules';
 
         if (! is_dir($modulesPath)) {
             return [];
