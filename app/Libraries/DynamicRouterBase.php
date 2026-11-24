@@ -190,12 +190,12 @@ abstract class DynamicRouterBase extends Controller
         mixed ...$params
     ): mixed {
         /*
-         * 1. Pastikan router siap digunakan.
+         * 1. Pastikan seluruh komponen router sudah siap.
          */
         $this->assertRouterInitialized();
 
         /*
-         * 2. Validasi path.
+         * 2. Validasi path policy.
          */
         $path = trim($this->request->getUri()->getPath(), '/');
         $policy = $this->rbacPolicy;
@@ -219,7 +219,7 @@ abstract class DynamicRouterBase extends Controller
         }
 
         /*
-         * 3. Periksa status router/module.
+         * 3. Periksa status module/router.
          */
         if (! $this->enabled && ! $this->isSuperadmin()) {
             throw PageNotFoundException::forPageNotFound();
@@ -229,7 +229,11 @@ abstract class DynamicRouterBase extends Controller
          * 4. Resolve controller, method, dan parameter.
          */
         [$controller, $method, $params] =
-            $this->resolveControllerAndMethod($seg1, $seg2, $params);
+            $this->resolveControllerAndMethod(
+                $seg1,
+                $seg2,
+                $params
+            );
 
         /*
          * 5. Security pipeline production.
@@ -248,11 +252,10 @@ abstract class DynamicRouterBase extends Controller
             }
 
             /*
-             * 5.2 Method discovery dan allowlist statis.
+             * 5.2 Method discovery dan static allowlist.
              *
-             * Jangan kirim HTTP verb ke MethodPolicy.
-             * Pemeriksaan verb ditangani oleh AccessChecker
-             * dan pembatasan tambahan HttpVerbPolicy.
+             * HTTP verb tidak dikirim ke MethodPolicy.
+             * Pemeriksaan Route Registry ditangani AccessChecker.
              */
             $methodDecision = $this->methodPolicy->diagnoseMethod(
                 $controller,
@@ -292,8 +295,8 @@ abstract class DynamicRouterBase extends Controller
             /*
              * 5.3 Rate limiting.
              *
-             * Tetap sebelum autentikasi agar endpoint publik
-             * seperti login dan register ikut terlindungi.
+             * Tetap melindungi endpoint publik seperti login
+             * dan register sebelum controller dijalankan.
              */
             if (
                 $this->rateLimitEnabled
@@ -303,7 +306,10 @@ abstract class DynamicRouterBase extends Controller
             }
 
             /*
-             * 5.4 Tentukan security policy.
+             * 5.4 Ambil security settings.
+             *
+             * Production tetap fail-closed melalui
+             * isSecurityFeatureEnabled().
              */
             $checkAccess = $this->isSecurityFeatureEnabled(
                 'Core.checkAccess'
@@ -316,18 +322,18 @@ abstract class DynamicRouterBase extends Controller
             /*
              * 5.5 Authentication dan authorization.
              *
-             * AccessChecker sudah memeriksa:
-             * - Route Registry
+             * AccessChecker merupakan pemeriksaan utama:
+             * - Endpoint terdaftar
              * - is_discovered
              * - is_routable
              * - is_allowed
              * - HTTP verb terdaftar
-             * - Public endpoint
+             * - Public endpoint policy
              * - Authentication
              * - Status akun
              * - Bypass group
              * - Permission override
-             * - Permission Route Registry
+             * - Route Registry permission
              */
             if ($checkAccess) {
                 $decision = $this->accessChecker->diagnoseAccess(
@@ -346,20 +352,26 @@ abstract class DynamicRouterBase extends Controller
              * 5.6 HTTP verb tambahan dari RouterConfig.
              *
              * Jika AccessChecker aktif:
-             * - Registry verb sudah diperiksa oleh AccessChecker.
-             * - HttpVerbPolicy hanya perlu dijalankan jika ada
-             *   konfigurasi allowedHttpVerbs lokal.
+             * - Validasi registry sudah dilakukan.
+             * - HttpVerbPolicy hanya memeriksa konfigurasi lokal
+             *   jika endpoint memilikinya.
              *
              * Jika AccessChecker tidak aktif:
-             * - HttpVerbPolicy tetap melakukan pemeriksaan,
-             *   termasuk fallback ke Route Registry.
+             * - HttpVerbPolicy tetap melakukan pemeriksaan.
+             * - Fallback registry tetap tersedia.
+             *
+             * Exclusion hanya melewati pemeriksaan tambahan ini,
+             * bukan validasi HTTP verb di AccessChecker.
              */
             if (
                 $checkHttpVerbs
                 && ! $this->isHttpVerbExcluded($endpoint)
                 && (
                     ! $checkAccess
-                    || array_key_exists($endpoint, $this->allowedHttpVerbs)
+                    || array_key_exists(
+                        $endpoint,
+                        $this->allowedHttpVerbs
+                    )
                 )
                 && ! $this->checkHttpVerb($endpoint)
             ) {
@@ -403,7 +415,7 @@ abstract class DynamicRouterBase extends Controller
         }
 
         /*
-         * 6. Eksekusi controller.
+         * 6. Jalankan controller.
          */
         $result = $this->runController(
             $controller,
