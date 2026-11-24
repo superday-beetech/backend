@@ -2,231 +2,279 @@
 
 declare(strict_types=1);
 
-namespace App\Services;
+namespace Modules\RouteRegistry\Services;
 
-use CodeIgniter\Database\BaseConnection;
-use Config\Database;
+use Modules\RouteRegistry\Repositories\RouteRegistryRepository;
+use RuntimeException;
 
-class RouteRegistryAccessService
+class RouteRegistryService
 {
-    protected BaseConnection $db;
-    protected AccessControlService $accessControl;
+    protected ModuleScannerService $scanner;
 
-    /**
-     * Cache hanya hidup selama instance service hidup.
-     */
-    private array $routeCache = [];
-    private array $routePermissionsCache = [];
+    protected RouteRegistryRepository $repository;
 
     public function __construct(
-        ?BaseConnection $db = null,
-        ?AccessControlService $accessControl = null
+        ?ModuleScannerService $scanner = null,
+        ?RouteRegistryRepository $repository = null
     ) {
-        $this->db = $db ?? Database::connect();
-        $this->accessControl = $accessControl
-            ?? new AccessControlService($this->db);
+        $this->scanner = $scanner ?? new ModuleScannerService();
+
+        $this->repository = $repository
+            ?? new RouteRegistryRepository();
     }
 
-    /**
-     * Kunci cache untuk endpoint dan HTTP verb.
-     */
-    private function routeCacheKey(
-        string $endpoint,
-        string $httpVerb
-    ): string {
-        return $endpoint . '|' . $httpVerb;
-    }
-
-    public function clearCache(
-        ?string $endpoint = null,
-        ?int $routeId = null
-    ): void {
-        if ($endpoint !== null) {
-            $endpoint = trim($endpoint);
-
-            foreach (array_keys($this->routeCache) as $key) {
-                if (str_starts_with($key, $endpoint . '|')) {
-                    unset($this->routeCache[$key]);
-                }
-            }
-        } else {
-            $this->routeCache = [];
-        }
-
-        if ($routeId !== null) {
-            unset($this->routePermissionsCache[$routeId]);
-        } else {
-            $this->routePermissionsCache = [];
-        }
-    }
-
-    /**
-     * Mengambil route yang aktif dan diizinkan untuk verb tertentu.
-     * Hasil null juga di-cache agar pencarian yang gagal tidak berulang.
-     */
-    private function findRoute(
-        string $endpoint,
-        string $httpVerb
-    ): ?array {
-        $endpoint = trim($endpoint);
-        $httpVerb = strtoupper(trim($httpVerb));
-
-        if ($endpoint === '' || $httpVerb === '') {
-            return null;
-        }
-
-        $key = $this->routeCacheKey($endpoint, $httpVerb);
-
-        if (array_key_exists($key, $this->routeCache)) {
-            return $this->routeCache[$key];
-        }
-
-        $route = $this->db->table('route_registry AS rr')
-            ->select('rr.id, rr.endpoint')
-            ->join(
-                'route_registry_verbs AS rrv',
-                'rrv.route_id = rr.id',
-                'inner'
-            )
-            ->where('rr.endpoint', $endpoint)
-            ->where('rrv.http_verb', $httpVerb)
-            ->where('rr.is_discovered', 1)
-            ->where('rr.is_routable', 1)
-            ->where('rr.is_allowed', 1)
-            ->get()
-            ->getRowArray();
-
-        return $this->routeCache[$key] = $route ?: null;
-    }
-
-    public function allowsHttpVerb(
-        string $endpoint,
-        string $httpVerb
-    ): bool {
-        return $this->findRoute($endpoint, $httpVerb) !== null;
-    }
-
-    public function findAllowedRoute(
-        string $endpoint,
-        string $httpVerb
-    ): ?array {
-        return $this->findRoute($endpoint, $httpVerb);
-    }
-
-    /**
-     * Ambil permission route satu kali, lalu cache hasilnya.
-     * Nilai permission adalah NAMA permission, bukan ID.
-     */
-    private function getRoutePermissions(int $routeId): array
+    public function syncPermissions(array $items): array
     {
-
-        if ($routeId <= 0) {
-            return [];
-        }
-
-        if (array_key_exists($routeId, $this->routePermissionsCache)) {
-            return $this->routePermissionsCache[$routeId];
-        }
-
-        $rows = $this->db->table('route_registry_permissions')
-            ->select('permission')
-            ->where('route_id', $routeId)
-            ->get()
-            ->getResultArray();
-
-        $permissions = [];
-
-        foreach ($rows as $row) {
-            $permission = trim((string) ($row['permission'] ?? ''));
-
-            // Data permission kosong dianggap konfigurasi tidak valid.
-            if ($permission === '') {
-                log_message(
-                    'error',
-                    'Permission route tidak valid: route_id={routeId}',
-                    ['routeId' => $routeId]
-                );
-                return $this->routePermissionsCache[$routeId] = [];
-            }
-
-            $permissions[$permission] = $permission;
-        }
-        $permissions = array_values($permissions);
-
-        if ($permissions === []) {
-            log_message(
-                'error',
-                'Permission route belum dikonfigurasi: route_id={routeId}',
-                ['routeId' => $routeId]
-            );
-        }
-        return $this->routePermissionsCache[$routeId] = $permissions;
+        return $this->repository->syncPermissions($items);
     }
 
-    /**
-     * Semua permission route harus dipenuhi.
-     * Route tanpa permission ditolak untuk pengguna biasa.
-     */
-    public function allows(int $userId, int $routeId): bool
+    public function syncNavigation(array $items): array
     {
-        if (
-            $userId <= 0
-            || $routeId <= 0
-            || ! $this->accessControl->isActiveUser($userId)
-        ) {
-            return false;
-        }
+        return $this->repository->syncNavigation($items);
+    }
 
-        $permissions = $this->getRoutePermissions((int) $routeId);
 
-        if ($permissions === []) {
-            return false;
-        }
-
-        return $this->accessControl->hasAllPermissions(
-            $userId,
-            $permissions
+    public function getRegisteredPaginated(
+        int $page = 1,
+        int $perPage = 25,
+        string $search = ''
+    ): array {
+        return $this->repository->getRegisteredPaginated(
+            $page,
+            $perPage,
+            $search
         );
     }
 
-    public function inspectEndpoint(string $module, string $endpoint, string $httpVerb): array
-    {
-        $module   = trim($module);
-        $endpoint = trim($endpoint);
-        $httpVerb = strtoupper(trim($httpVerb));
 
-        $route = $this->db->table('route_registry')
-            ->where('module', $module)
-            ->where('endpoint', $endpoint)
-            ->get()
-            ->getRowArray();
-        if ($route === null) {
-            return [
-                'found'     => false,
-                'module'    => $module,
-                'endpoint'  => $endpoint,
-                'http_verb' => $httpVerb,
-                'message'   => 'Endpoint belum terdaftar.',
-            ];
-        }
-        $permissions = $this->db->table('route_registry_permissions')
-            ->select('permission')
-            ->where('route_id', $route['id'])
-            ->get()
-            ->getResultArray();
+    /**
+     * Scan read-only dan gabungkan dengan registry saat ini.
+     */
+    public function scanPreview(): array
+    {
+        $scan = $this->scanner->scan();
+
         return [
-            'found' => true,
-            'id' => (int) $route['id'],
-            'endpoint' => $route['endpoint'],
-            'is_discovered' => (bool) $route['is_discovered'],
-            'is_routable' => (bool) $route['is_routable'],
-            'is_allowed' => (bool) $route['is_allowed'],
-            'verb_registered' => $this->db
-                ->table('route_registry_verbs')
-                ->where('route_id', $route['id'])
-                ->where('http_verb', $httpVerb)
-                ->countAllResults() > 0,
-            'permissions' => array_column($permissions, 'permission'),
+            'total' => count($scan),
+            'items' => $this->repository
+                ->mergeScanWithRegistry($scan),
         ];
+    }
+
+    /**
+     * Jalankan tindakan terhadap endpoint terpilih.
+     *
+     * $selected:
+     * - insert/update: array data hasil scanner
+     * - delete: array string endpoint
+     */
+    public function apply(
+        string $action,
+        array $selected
+    ): array {
+        if ($selected === []) {
+            throw new RuntimeException(
+                'Pilih minimal satu endpoint.'
+            );
+        }
+
+        $action = strtolower(trim($action));
+
+        return match ($action) {
+            'insert' => $this->repository->insertSelected(
+                $this->validateScanItems($selected)
+            ),
+
+            'update' => $this->repository->updateSelected(
+                $this->validateScanItems($selected)
+            ),
+
+            'delete' => $this->repository->deleteSelected(
+                $this->validateEndpoints($selected)
+            ),
+
+            default => throw new RuntimeException(
+                'Tindakan tidak dikenal.'
+            ),
+        };
+    }
+
+    /**
+     * Pastikan input insert/update berbentuk data scan.
+     */
+    protected function validateScanItems(array $items): array
+    {
+        $valid = [];
+
+        foreach ($items as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            foreach (
+                ['module', 'controller', 'method', 'endpoint'] as $key
+            ) {
+                if (
+                    ! isset($item[$key])
+                    || ! is_string($item[$key])
+                    || trim($item[$key]) === ''
+                ) {
+                    throw new RuntimeException(
+                        'Data endpoint terpilih tidak lengkap.'
+                    );
+                }
+            }
+
+            $valid[] = $item;
+        }
+
+        if ($valid === []) {
+            throw new RuntimeException(
+                'Tidak ada endpoint valid yang dipilih.'
+            );
+        }
+
+        return $valid;
+    }
+
+    /**
+     * Pastikan input delete berisi endpoint.
+     */
+    protected function validateEndpoints(array $items): array
+    {
+        $endpoints = [];
+
+        foreach ($items as $item) {
+            if (is_string($item)) {
+                $endpoint = trim($item);
+            } elseif (
+                is_array($item)
+                && isset($item['endpoint'])
+                && is_string($item['endpoint'])
+            ) {
+                $endpoint = trim($item['endpoint']);
+            } else {
+                continue;
+            }
+
+            if ($endpoint !== '') {
+                $endpoints[] = $endpoint;
+            }
+        }
+
+        if ($endpoints === []) {
+            throw new RuntimeException(
+                'Tidak ada endpoint valid untuk dihapus.'
+            );
+        }
+
+        return array_values(array_unique($endpoints));
+    }
+
+
+    /**
+     * Membaca HTTP verb suatu endpoint.
+     */
+    public function getVerbs(string $endpoint): array
+    {
+        return $this->repository->getVerbs($endpoint);
+    }
+
+    /**
+     * Menyimpan konfigurasi HTTP verb secara eksplisit.
+     */
+    public function saveVerbs(
+        string $endpoint,
+        array $verbs
+    ): array {
+        if (trim($endpoint) === '') {
+            throw new RuntimeException(
+                'Endpoint wajib dipilih.'
+            );
+        }
+
+        return $this->repository->saveVerbs(
+            $endpoint,
+            $verbs
+        );
+    }
+
+    /**
+     * Daftar registry untuk pemuatan awal halaman.
+     */
+    public function getRegistered(): array
+    {
+        $items = $this->repository->getRegistered();
+
+        return [
+            'total' => count($items),
+            'items' => $items,
+        ];
+    }
+
+    /**
+     * Memperbarui satu status registry.
+     */
+    public function updateStatus(
+        int $routeId,
+        string $field,
+        bool $enabled
+    ): array {
+        return $this->repository->updateStatus(
+            $routeId,
+            $field,
+            $enabled
+        );
+    }
+
+    public function getVerbsById(int $routeId): array
+    {
+        if ($routeId < 1) {
+            throw new RuntimeException('ID endpoint tidak valid.');
+        }
+
+        return $this->repository->getVerbsById($routeId);
+    }
+
+    public function syncShieldPermissions(array $items): array
+    {
+        return $this->repository->syncShieldPermissions($items);
+    }
+
+    public function previewShieldPermissions(): array
+    {
+        return $this->repository->previewShieldPermissions();
+    }
+
+
+    public function updateEndpointIdentity(
+        int $routeId,
+        string $module,
+        string $controller,
+        string $method
+    ): array {
+        return $this->repository->updateEndpointIdentity(
+            $routeId,
+            $module,
+            $controller,
+            $method
+        );
+    }
+
+
+    public function getMenuSyncPreview(): array
+    {
+        return $this->repository->getMenuSyncPreview();
+    }
+
+    public function syncSelectedMenus(array $items): array
+    {
+        if ($items === []) {
+            throw new \InvalidArgumentException(
+                'Pilih minimal satu endpoint untuk disinkronkan.'
+            );
+        }
+
+        return $this->repository->syncSelectedMenus($items);
     }
 }
