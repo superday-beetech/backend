@@ -273,6 +273,40 @@ $routes->group(
 // ROUTE WEB DINAMIS PER MODUL (selalu lewat filter RBAC)
 // ============================================================
 
+foreach ($manifest['modules'] as $module => $entry) {
+    $prefix = $entry['prefix'];
+
+    if (! $wantsWeb($prefix) || (! $entry['dynamic'] && $entry['customFile'] === null)) {
+        continue;
+    }
+
+    $routes->group(
+        $prefix,
+        ['namespace' => $entry['namespace'], 'filter' => $webFilter],
+        static function (RouteCollection $routes) use ($entry, $verbs, $loadRouteFile): void {
+            // Route eksplisit modul dimuat DULU agar menang atas catch-all,
+            // tetapi tetap di bawah filter RBAC milik group.
+            if ($entry['customFile'] !== null) {
+                $loadRouteFile($routes, $entry['customFile']);
+            }
+
+            if (! $entry['dynamic']) {
+                return;
+            }
+
+            // Kedalaman maksimum 4 segmen: controller/method/param1/param2
+            $routes->match($verbs, '/', 'DynamicRouter::route');
+            $routes->match($verbs, '(:dslug)', 'DynamicRouter::route/$1');
+            $routes->match($verbs, '(:dslug)/(:dslug)', 'DynamicRouter::route/$1/$2');
+            $routes->match($verbs, '(:dslug)/(:dslug)/(:dparam)', 'DynamicRouter::route/$1/$2/$3');
+            $routes->match($verbs, '(:dslug)/(:dslug)/(:dparam)/(:dparam)', 'DynamicRouter::route/$1/$2/$3/$4');
+        }
+    );
+}
+
+// ============================================================
+// ROUTE API PER MODUL (prefix sama dengan web)
+// ============================================================
 
 foreach ($manifest['modules'] as $module => $entry) {
     $prefix = $entry['prefix'];
@@ -304,37 +338,6 @@ foreach ($manifest['modules'] as $module => $entry) {
             }
 
             // Wildcard setelah route statis.
-            $routes->match($verbs, '(:dslug)', 'ApiRouter::route/$1');
-            $routes->match($verbs, '(:dslug)/(:dparam)', 'ApiRouter::route/$1/$2');
-            $routes->match($verbs, '(:dslug)/(:dparam)/(:dparam)', 'ApiRouter::route/$1/$2/$3');
-        }
-    );
-}
-
-
-// ============================================================
-// ROUTE API PER MODUL (prefix sama dengan web)
-// ============================================================
-
-foreach ($manifest['modules'] as $module => $entry) {
-    $prefix = $entry['prefix'];
-
-    if (! $entry['api'] || ! $wantsApi($prefix)) {
-        continue;
-    }
-
-    $routes->group(
-        "api/v1/{$prefix}",
-        ['namespace' => $entry['namespace'], 'filter' => $apiFilter],
-        static function (RouteCollection $routes) use ($entry, $verbs, $loadRouteFile): void {
-            //                                                       ↑ TAMBAH $entry & $loadRouteFile
-
-            // Muat route API statis modul DULU (kalau ada)
-            if (! empty($entry['customApiFile'])) {
-                $loadRouteFile($routes, $entry['customApiFile']);
-            }
-
-            // Wildcard setelahnya
             $routes->match($verbs, '(:dslug)', 'ApiRouter::route/$1');
             $routes->match($verbs, '(:dslug)/(:dparam)', 'ApiRouter::route/$1/$2');
             $routes->match($verbs, '(:dslug)/(:dparam)/(:dparam)', 'ApiRouter::route/$1/$2/$3');
