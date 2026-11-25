@@ -55,6 +55,7 @@ final class CreateCoreOrganizationTables extends Migration
                 deleted_at DATETIME DEFAULT NULL,
                 PRIMARY KEY (id),
                 UNIQUE KEY uq_core_unit_org_code (organization_id, code),
+                UNIQUE KEY uq_core_unit_org_id (organization_id, id),
                 KEY idx_core_unit_parent (parent_id),
                 KEY idx_core_unit_org_status (organization_id, status)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
