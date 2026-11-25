@@ -23,12 +23,8 @@ class OrganizationMembershipService
     public function __construct()
     {
         $this->db = Database::connect();
-        $this->organizations = new OrganizationModel();
-        $this->memberships = new OrganizationMembershipModel();
-
-        // Model dan query builder wajib memakai koneksi transaksi yang sama.
-        $this->organizations->setConnection($this->db);
-        $this->memberships->setConnection($this->db);
+        $this->organizations = new OrganizationModel($this->db);
+        $this->memberships = new OrganizationMembershipModel($this->db);
     }
 
 
