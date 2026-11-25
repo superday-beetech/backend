@@ -142,9 +142,9 @@ class OrganizationService
             throw new RuntimeException('Organisasi tidak ditemukan atau tidak dapat diakses.');
         }
 
-        /* if (!in_array($membership['membership_role'], ['superadmin', 'owner', 'admin'], true)) {
+        if (!in_array($membership['membership_role'], ['owner', 'admin'], true)) {
             throw new RuntimeException('Tidak memiliki kewenangan mengubah organisasi.');
-        } */
+        }
 
         $allowed = [
             'name',
