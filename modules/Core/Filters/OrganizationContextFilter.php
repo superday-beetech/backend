@@ -20,11 +20,11 @@ final class OrganizationContextFilter implements FilterInterface
      * sebelum organisasi aktif dipilih.
      */
     private const CONTEXT_FREE_ENDPOINTS = [
-        'organization',
-        'organization/context',
-        'organization/available',
-        'organization/switch',
-        'organization/clear',
+        'organization-context/index-context',
+        'organization-context/index-available',
+        'organization-context/switch-organization',
+        'organization-context/clear-context',
+        'organizations/create-organization',
     ];
 
     public function before(RequestInterface $request, $arguments = null)
