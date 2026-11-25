@@ -23,8 +23,8 @@ class OrganizationMembershipService
     public function __construct()
     {
         $this->db = Database::connect();
-        $this->organizations = new OrganizationModel();
-        $this->memberships = new OrganizationMembershipModel();
+        $this->organizations = new OrganizationModel($this->db);
+        $this->memberships = new OrganizationMembershipModel($this->db);
     }
 
 
@@ -210,6 +210,14 @@ class OrganizationMembershipService
         $this->db->transBegin();
 
         try {
+            // Default organization bersifat global per user, bukan per organisasi.
+            if ((int) $payload['is_default'] === 1) {
+                $this->db->table('core_organization_memberships')
+                    ->where('user_id', $payload['user_id'])
+                    ->set(['is_default' => 0])
+                    ->update();
+            }
+
             $membershipId = $this->memberships->insert($payload);
 
             if ($membershipId === false) {
@@ -307,9 +315,27 @@ class OrganizationMembershipService
             );
         }
 
+        $oldUserId = (int) $membership['user_id'];
+        $targetUserId = (int) ($payload['user_id'] ?? $oldUserId);
+
+        // Perpindahan user tidak otomatis membawa status default user lama.
+        if ($targetUserId !== $oldUserId && !array_key_exists('is_default', $payload)) {
+            $payload['is_default'] = 0;
+        }
+
+        $willBeDefault = (int) ($payload['is_default'] ?? $membership['is_default']) === 1;
+
         $this->db->transBegin();
 
         try {
+            if ($willBeDefault) {
+                $this->db->table('core_organization_memberships')
+                    ->where('user_id', $targetUserId)
+                    ->where('id !=', $membershipId)
+                    ->set(['is_default' => 0])
+                    ->update();
+            }
+
             if ($payload !== []) {
                 $updated = $this->memberships->update(
                     $membershipId,
@@ -369,7 +395,10 @@ class OrganizationMembershipService
 
         return $this->memberships->update(
             $membershipId,
-            ['status' => 'inactive']
+            [
+                'status' => 'inactive',
+                'is_default' => 0,
+            ]
         );
     }
 
@@ -566,14 +595,17 @@ class OrganizationMembershipService
         return null;
     }
 
+
     private function syncUnits(
         int $membershipId,
         int $organizationId,
         array $unitIds,
         ?int $defaultUnitId
     ): void {
+        // Pastikan semua unit aktif dan berasal dari organisasi yang sama.
         $this->validateUnits($organizationId, $unitIds);
 
+        // Unit default wajib termasuk dalam daftar unit membership.
         if (
             $defaultUnitId !== null
             && !in_array($defaultUnitId, $unitIds, true)
@@ -587,8 +619,18 @@ class OrganizationMembershipService
             'core_organization_membership_units'
         );
 
-        $table->where('membership_id', $membershipId)->delete();
+        // Hapus relasi lama. Operasi ini harus berada dalam transaksi.
+        $deleted = $table
+            ->where('membership_id', $membershipId)
+            ->delete();
 
+        if ($deleted === false) {
+            throw new RuntimeException(
+                'Gagal menghapus relasi unit membership lama.'
+            );
+        }
+
+        // Membership boleh tidak memiliki unit.
         if ($unitIds === []) {
             return;
         }
@@ -598,20 +640,24 @@ class OrganizationMembershipService
 
         foreach ($unitIds as $unitId) {
             $rows[] = [
-                'membership_id' => $membershipId,
+                'organization_id'     => $organizationId,
+                'membership_id'       => $membershipId,
                 'organization_unit_id' => $unitId,
-                'is_default' => $defaultUnitId === $unitId ? 1 : 0,
-                'created_at' => $now,
-                'updated_at' => $now,
+                'is_default'          => $defaultUnitId === $unitId ? 1 : 0,
+                'created_at'          => $now,
+                'updated_at'          => $now,
             ];
         }
 
-        if (!$table->insertBatch($rows)) {
+        $inserted = $table->insertBatch($rows);
+
+        if ($inserted === false) {
             throw new RuntimeException(
                 'Gagal menyimpan relasi unit membership.'
             );
         }
     }
+
 
     private function syncLegacyUnitId(
         int $membershipId,
@@ -637,25 +683,31 @@ class OrganizationMembershipService
         int $organizationId
     ): array {
         return $this->db->table(
-            'core_organization_membership_units mu'
+            'core_organization_memberships m'
         )
             ->select([
                 'ou.id',
                 'ou.code',
                 'ou.name',
                 'ou.unit_type',
-                'mu.is_default',
+                'COALESCE(mu.is_default, 1) AS is_default',
             ])
             ->join(
+                'core_organization_membership_units mu',
+                'mu.membership_id = m.id AND mu.organization_id = m.organization_id',
+                'left'
+            )
+            ->join(
                 'core_organization_units ou',
-                'ou.id = mu.organization_unit_id',
+                'ou.id = COALESCE(mu.organization_unit_id, m.unit_id)',
                 'inner'
             )
-            ->where('mu.membership_id', $membershipId)
+            ->where('m.id', $membershipId)
+            ->where('m.organization_id', $organizationId)
             ->where('ou.organization_id', $organizationId)
             ->where('ou.status', 'active')
             ->where('ou.deleted_at', null)
-            ->orderBy('mu.is_default', 'DESC')
+            ->orderBy('is_default', 'DESC')
             ->orderBy('ou.name', 'ASC')
             ->get()
             ->getResultArray();
@@ -712,3 +764,4 @@ class OrganizationMembershipService
             : 'Terjadi kesalahan saat menyimpan membership.';
     }
 }
+
