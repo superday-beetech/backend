@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Modules\Logistic\Services;
+namespace Modules\Logistics\Services;
 
 use Config\Database;
 use DateTimeImmutable;
