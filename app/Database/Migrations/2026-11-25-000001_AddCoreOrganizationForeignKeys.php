@@ -55,6 +55,15 @@ final class AddCoreOrganizationForeignKeys extends Migration
         $this->assertNoOrphans(
             'SELECT COUNT(*) AS total
              FROM core_organization_units u
+             INNER JOIN core_organization_units p ON p.id = u.parent_id
+             WHERE u.parent_id IS NOT NULL
+               AND p.organization_id <> u.organization_id',
+            'A parent unit belongs to a different organization.'
+        );
+
+        $this->assertNoOrphans(
+            'SELECT COUNT(*) AS total
+             FROM core_organization_units u
              LEFT JOIN core_organization_units p ON p.id = u.parent_id
              WHERE u.parent_id IS NOT NULL AND p.id IS NULL',
             'core_organization_units.parent_id references a missing unit.'
@@ -86,6 +95,15 @@ final class AddCoreOrganizationForeignKeys extends Migration
 
         $this->assertNoOrphans(
             'SELECT COUNT(*) AS total
+             FROM core_organization_memberships m
+             INNER JOIN core_organization_units u ON u.id = m.unit_id
+             WHERE m.unit_id IS NOT NULL
+               AND u.organization_id <> m.organization_id',
+            'A legacy membership unit belongs to a different organization.'
+        );
+
+        $this->assertNoOrphans(
+            'SELECT COUNT(*) AS total
              FROM core_organization_membership_units mu
              LEFT JOIN core_organization_memberships m ON m.id = mu.membership_id
              WHERE m.id IS NULL',
@@ -98,6 +116,15 @@ final class AddCoreOrganizationForeignKeys extends Migration
              LEFT JOIN core_organization_units u ON u.id = mu.organization_unit_id
              WHERE u.id IS NULL',
             'core_organization_membership_units.organization_unit_id references a missing unit.'
+        );
+
+        $this->assertNoOrphans(
+            'SELECT COUNT(*) AS total
+             FROM core_organization_membership_units mu
+             INNER JOIN core_organization_memberships m ON m.id = mu.membership_id
+             INNER JOIN core_organization_units u ON u.id = mu.organization_unit_id
+             WHERE u.organization_id <> m.organization_id',
+            'A membership-unit relation connects different organizations.'
         );
 
         $this->addConstraint(
