@@ -13,7 +13,7 @@ use CodeIgniter\Config\BaseConfig;
  */
 class AuthPolicy extends BaseConfig
 {
-    public string $loginRoute = 'login';
+    public string $loginRoute = 'auth/login';
     public string $apiPrefix = 'api';
 
     public array $webAuthenticators = ['session'];
