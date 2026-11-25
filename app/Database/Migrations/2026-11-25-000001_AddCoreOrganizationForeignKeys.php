@@ -117,6 +117,44 @@ final class AddCoreOrganizationForeignKeys extends Migration
             'A membership-unit relation connects different organizations.'
         );
 
+        // Tambahkan organization_id pada pivot lama dan isi dari membership.
+        if (! $this->db->fieldExists(
+            'organization_id',
+            'core_organization_membership_units'
+        )) {
+            $this->db->query(
+                'ALTER TABLE core_organization_membership_units
+                 ADD COLUMN organization_id BIGINT UNSIGNED NULL AFTER id'
+            );
+        }
+
+        $this->db->query(
+            'UPDATE core_organization_membership_units mu
+             INNER JOIN core_organization_memberships m
+                ON m.id = mu.membership_id
+             SET mu.organization_id = m.organization_id
+             WHERE mu.organization_id IS NULL'
+        );
+
+        $this->assertNoOrphans(
+            'SELECT COUNT(*) AS total
+             FROM core_organization_membership_units
+             WHERE organization_id IS NULL',
+            'A membership-unit relation could not be assigned to an organization.'
+        );
+
+        $this->db->query(
+            'ALTER TABLE core_organization_membership_units
+             MODIFY organization_id BIGINT UNSIGNED NOT NULL'
+        );
+
+        $this->addUniqueIndex(
+            'core_organization_memberships',
+            'uq_core_membership_org_id',
+            'ALTER TABLE core_organization_memberships
+             ADD UNIQUE KEY uq_core_membership_org_id (organization_id, id)'
+        );
+
         $this->addConstraint(
             'fk_core_units_organization',
             'ALTER TABLE core_organization_units
@@ -170,20 +208,20 @@ final class AddCoreOrganizationForeignKeys extends Migration
         );
 
         $this->addConstraint(
-            'fk_core_membership_units_membership',
+            'fk_core_membership_units_membership_org',
             'ALTER TABLE core_organization_membership_units
-             ADD CONSTRAINT fk_core_membership_units_membership
-             FOREIGN KEY (membership_id)
-             REFERENCES core_organization_memberships (id)
+             ADD CONSTRAINT fk_core_membership_units_membership_org
+             FOREIGN KEY (organization_id, membership_id)
+             REFERENCES core_organization_memberships (organization_id, id)
              ON DELETE CASCADE ON UPDATE CASCADE'
         );
 
         $this->addConstraint(
-            'fk_core_membership_units_unit',
+            'fk_core_membership_units_unit_org',
             'ALTER TABLE core_organization_membership_units
-             ADD CONSTRAINT fk_core_membership_units_unit
-             FOREIGN KEY (organization_unit_id)
-             REFERENCES core_organization_units (id)
+             ADD CONSTRAINT fk_core_membership_units_unit_org
+             FOREIGN KEY (organization_id, organization_unit_id)
+             REFERENCES core_organization_units (organization_id, id)
              ON DELETE RESTRICT ON UPDATE CASCADE'
         );
     }
@@ -192,12 +230,25 @@ final class AddCoreOrganizationForeignKeys extends Migration
     {
         $this->dropConstraint(
             'core_organization_membership_units',
-            'fk_core_membership_units_unit'
+            'fk_core_membership_units_unit_org'
         );
         $this->dropConstraint(
             'core_organization_membership_units',
-            'fk_core_membership_units_membership'
+            'fk_core_membership_units_membership_org'
         );
+        $this->dropUniqueIndex(
+            'core_organization_memberships',
+            'uq_core_membership_org_id'
+        );
+        if ($this->db->fieldExists(
+            'organization_id',
+            'core_organization_membership_units'
+        )) {
+            $this->db->query(
+                'ALTER TABLE core_organization_membership_units
+                 DROP COLUMN organization_id'
+            );
+        }
         $this->dropConstraint(
             'core_organization_memberships',
             'fk_core_memberships_legacy_unit_org'
