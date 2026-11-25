@@ -88,9 +88,6 @@ class OrganizationService
         $this->db->transBegin();
 
         try {
-            // Pastikan seluruh model menggunakan koneksi transaksi.
-            // $this->organizations->setConnection($this->db);
-            // $this->memberships->setConnection($this->db);
 
             $organizationId = $this->organizations->insert(
                 $organizationData,
@@ -364,18 +361,21 @@ class OrganizationService
             );
         }
 
-        // Membership dapat terhubung ke banyak unit melalui pivot.
-        // unit_id hanya menyimpan unit default untuk kompatibilitas lama.
+        // Pivot adalah relasi utama; unit_id tetap dibaca untuk data legacy
+        // yang belum memiliki baris pada core_organization_membership_units.
         $hasMembership = $this->db
-            ->table('core_organization_membership_units mu')
+            ->table('core_organization_memberships m')
             ->join(
-                'core_organization_memberships m',
-                'm.id = mu.membership_id',
-                'inner'
+                'core_organization_membership_units mu',
+                'mu.membership_id = m.id',
+                'left'
             )
-            ->where('mu.organization_unit_id', $unitId)
             ->where('m.organization_id', $organizationId)
             ->where('m.status', 'active')
+            ->groupStart()
+                ->where('m.unit_id', $unitId)
+                ->orWhere('mu.organization_unit_id', $unitId)
+            ->groupEnd()
             ->countAllResults() > 0;
 
         if ($hasMembership) {
