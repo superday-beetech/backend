@@ -53,7 +53,7 @@ class OrganizationContextService
             )
             ->join(
                 'core_organization_membership_units mu',
-                'mu.membership_id = m.id',
+                'mu.membership_id = m.id AND mu.organization_id = m.organization_id',
                 'left'
             )
             ->join(
