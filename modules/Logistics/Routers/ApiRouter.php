@@ -10,7 +10,7 @@ class ApiRouter extends DynamicRouterBase
 {
     protected string $moduleFolder = 'Logistics';
 
-    protected string $moduleNamespace = 'Modules\\Logistic\\Controllers\\API\\V1';
+    protected string $moduleNamespace = 'Modules\\Logistics\\Controllers\\API\\V1';
 
     protected string $defaultController = 'DeliveryApiController';
 
