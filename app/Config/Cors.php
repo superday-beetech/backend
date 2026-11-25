@@ -11,19 +11,24 @@ use CodeIgniter\Config\BaseConfig;
  */
 class Cors extends BaseConfig
 {
-
     // app/Config/Cors.php
     public function __construct()
     {
         parent::__construct();
-        $origins = array_values(array_filter(array_map(
-            'trim',
-            explode(',', (string) env(
-                'cors.allowedOrigins',
-                'http://localhost:5173,http://127.0.0.1:5173,http://cakra.test,http://localhost:8080,http://'
-            ))
-        )));
+        $env = env('cors.allowedOrigins');
 
+        if ($env === null || trim($env) === '') {
+            if (ENVIRONMENT === 'production') {
+                throw new \RuntimeException(
+                    'cors.allowedOrigins wajib di-set di .env untuk production'
+                );
+            }
+            $env = 'http://localhost:5173,http://127.0.0.1:5173,http://cakra.test';
+        }
+        $origins = array_values(array_filter(array_map('trim', explode(',', $env)), static function (string $o): bool {
+            // Hanya origin valid: scheme://host[:port], tanpa path/trailing slash
+            return preg_match('#^https?://[a-z0-9.\-]+(:\d+)?$#i', $o) === 1;
+        }));
         $this->default['allowedOrigins'] = $origins;
         $this->default['allowedOriginsPatterns'] = [];
 
@@ -33,9 +38,9 @@ class Cors extends BaseConfig
             'Content-Type',
             'Accept',
             'Authorization',
-            'X-ACN-Auth-Mode',
             'X-Request-ID',
             'X-Requested-With',
+            'X-CSRF-TOKEN'
         ];
 
         $this->default['exposedHeaders'] = [

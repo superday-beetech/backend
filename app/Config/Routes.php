@@ -32,7 +32,7 @@ use CodeIgniter\Router\RouteCollection;
 $routes->setAutoRoute(false);
 $routes->setTranslateURIDashes(false);
 
-$routes->get('/', 'Home::index', ['filter' => 'rbac']);
+$routes->get('/', 'Home::index');
 
 
 $modulesPath  = ROOTPATH . 'modules' . DIRECTORY_SEPARATOR;
@@ -258,7 +258,7 @@ $routes->get('api/v1/navigation', 'ErpApiController::index', ['filter' => 'rbac'
 $routes->get('api/v1/settings', 'ErpApiController::settings', ['filter' => 'rbac']);
 $routes->post('api/v1/settings', 'ErpApiController::settings', ['filter' => 'rbac']);
 $routes->get('uploads/products/(:segment)', 'FileController::productImage/$1');
-$routes->get('uploads/products/temp/(:segment)', 'FileController::tempImage/$1');
+$routes->get('uploads/products/temp/(:segment)', 'FileController::tempImage/$1', ['filter' => 'rbac']);
 
 // Webhook (payment gateway / marketplace): wajib validasi signature di filter.
 $routes->group(

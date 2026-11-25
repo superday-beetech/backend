@@ -41,7 +41,6 @@ class Autoload extends AutoloadConfig
         'Config'      => APPPATH . 'Config',
         APP_NAMESPACE => APPPATH,
         'Modules'     => ROOTPATH . 'modules',
-        'Modules\\Pharmacy' => ROOTPATH . 'modules/Pharmacy',
     ];
 
     /**

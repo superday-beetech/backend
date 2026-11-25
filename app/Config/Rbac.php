@@ -32,7 +32,7 @@ class Rbac extends BaseConfig
 
     /** Pemetaan path -> permission untuk route non-standar. */
     public array $overrides = [
-        'GET /' => self::AUTHENTICATED,
+        // 'GET /' => self::AUTHENTICATED,
     ];
 
     public int $maxPathLength = 2048;

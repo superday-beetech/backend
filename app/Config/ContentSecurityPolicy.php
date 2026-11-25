@@ -28,7 +28,7 @@ class ContentSecurityPolicy extends BaseConfig
      * Specifies a URL where a browser will send reports
      * when a content security policy is violated.
      */
-    public ?string $reportURI = null;
+    public ?string $reportURI =  '/csp-report';
 
     /**
      * Specifies a reporting endpoint to which violation reports ought to be sent.
@@ -40,7 +40,7 @@ class ContentSecurityPolicy extends BaseConfig
      * HTTP to HTTPS. This directive is for websites with
      * large numbers of old URLs that need to be rewritten.
      */
-    public bool $upgradeInsecureRequests = false;
+    public bool $upgradeInsecureRequests = ENVIRONMENT === 'production' ? true : false;
 
     // -------------------------------------------------------------------------
     // CSP DIRECTIVES SETTINGS
@@ -52,7 +52,7 @@ class ContentSecurityPolicy extends BaseConfig
      *
      * @var list<string>|string|null
      */
-    public $defaultSrc;
+    public $defaultSrc = 'self';
 
     /**
      * Lists allowed scripts' URLs.
@@ -74,21 +74,21 @@ class ContentSecurityPolicy extends BaseConfig
      *
      * @var list<string>|string
      */
-    public array|string $scriptSrcAttr = 'self';
+    public array|string $scriptSrcAttr = 'none';
 
     /**
      * Lists allowed stylesheets' URLs.
      *
      * @var list<string>|string
      */
-    public $styleSrc = 'self';
+    public $styleSrc = ["'self'", "'unsafe-inline'"];
 
     /**
      * Specifies valid sources for stylesheets <link> elements.
      *
      * @var list<string>|string
      */
-    public array|string $styleSrcElem = 'self';
+    public array|string $styleSrcElem = ["'self'", "'unsafe-inline'"];
 
     /**
      * Specifies valid sources for stylesheets inline
@@ -96,14 +96,14 @@ class ContentSecurityPolicy extends BaseConfig
      *
      * @var list<string>|string
      */
-    public array|string $styleSrcAttr = 'self';
+    public array|string $styleSrcAttr = ["'self'", "'unsafe-inline'"];
 
     /**
      * Defines the origins from which images can be loaded.
      *
      * @var list<string>|string
      */
-    public $imageSrc = 'self';
+    public $imageSrc = ["'self'", 'data:', 'blob:'];
 
     /**
      * Restricts the URLs that can appear in a page's `<base>` element.
@@ -134,7 +134,7 @@ class ContentSecurityPolicy extends BaseConfig
      *
      * @var list<string>|string
      */
-    public $fontSrc;
+    public $fontSrc = ["'self'", 'data:'];
 
     /**
      * Lists valid endpoints for submission from `<form>` tags.
@@ -159,7 +159,7 @@ class ContentSecurityPolicy extends BaseConfig
      *
      * @var list<string>|string|null
      */
-    public $frameSrc;
+    public $frameSrc = 'none';
 
     /**
      * Restricts the origins allowed to deliver video and audio.
