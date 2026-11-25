@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\Rbac\Models;
 
-use Modules\Core\Models\OrganizationModel as CoreOrganizationModel;
+use Modules\Core\Models\OrganizationModel as BaseOrganizationModel;
 
 /**
  * Compatibility adapter for legacy Rbac consumers.
@@ -12,7 +12,7 @@ use Modules\Core\Models\OrganizationModel as CoreOrganizationModel;
  * @deprecated Use Modules\Core\Models\OrganizationModel directly.
  * Core owns the organization domain and its persistence configuration.
  */
-class CoreOrganizationModel extends CoreOrganizationModel
+class CoreOrganizationModel extends BaseOrganizationModel
 {
     /**
      * @deprecated Use the Core organization query/service APIs.
