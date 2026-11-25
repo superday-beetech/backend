@@ -10,23 +10,23 @@ use CodeIgniter\Router\RouteCollection;
 $routes->match(
     ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     '(:segment)/(:segment)/(:any)',
-    '\Modules\Logisticss\Routers\DynamicRouter::route/$1/$2/$3'
+    '\Modules\Logistics\Routers\DynamicRouter::route/$1/$2/$3'
 );
 
 $routes->match(
     ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     '(:segment)/(:segment)',
-    '\Modules\Logisticss\Routers\DynamicRouter::route/$1/$2'
+    '\Modules\Logistics\Routers\DynamicRouter::route/$1/$2'
 );
 
 $routes->match(
     ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     '(:segment)',
-    '\Modules\Logisticss\Routers\DynamicRouter::route/$1'
+    '\Modules\Logistics\Routers\DynamicRouter::route/$1'
 );
 
 $routes->match(
     ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     '/',
-    '\Modules\Logisticss\Routers\DynamicRouter::route'
+    '\Modules\Logistics\Routers\DynamicRouter::route'
 );
