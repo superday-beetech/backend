@@ -9,7 +9,7 @@ use CodeIgniter\Router\RouteCollection;
 
 $routes->group(
     '',
-    ['namespace' => 'Modules\\Logistic\\Routers'],
+    ['namespace' => 'Modules\\Logistics\\Routers'],
     static function (RouteCollection $routes): void {
         $verbs = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 
