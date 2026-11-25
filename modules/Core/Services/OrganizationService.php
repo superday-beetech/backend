@@ -15,19 +15,19 @@ use Throwable;
 class OrganizationService
 {
     private BaseConnection $db;
+    private OrganizationModel $organizations;
+    private OrganizationMembershipModel $memberships;
     private OrganizationUnitModel $units;
+
     public function __construct(
-        private readonly OrganizationModel $organizations = new OrganizationModel(),
-        private readonly OrganizationMembershipModel $memberships = new OrganizationMembershipModel(),
+        ?OrganizationModel $organizations = null,
+        ?OrganizationMembershipModel $memberships = null,
         ?OrganizationUnitModel $units = null,
     ) {
         $this->db = Database::connect();
-        $this->units = $units ?? new OrganizationUnitModel();
-
-        // Semua model memakai koneksi yang sama dengan transaksi service.
-        $this->organizations->setConnection($this->db);
-        $this->memberships->setConnection($this->db);
-        $this->units->setConnection($this->db);
+        $this->organizations = $organizations ?? new OrganizationModel($this->db);
+        $this->memberships = $memberships ?? new OrganizationMembershipModel($this->db);
+        $this->units = $units ?? new OrganizationUnitModel($this->db);
     }
 
     public function findActive(int $organizationId): ?array
