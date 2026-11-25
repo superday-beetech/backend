@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\Core;
 
-use App\Enums\ApiErrorCode;
+use App\Enum\ApiErrorCode;
 use CodeIgniter\Database\Exceptions\DatabaseException;
-use CodeIgniter\Exceptions\InvalidArgumentException as CIInvalidArgumentException;
+use CodeIgniter\Exceptions\InvalidArgumentException;
 use CodeIgniter\HTTP\RequestInterface;
 use CodeIgniter\HTTP\ResponseInterface;
 use CodeIgniter\RESTful\ResourceController;
@@ -19,6 +19,11 @@ use Throwable;
 class ApiController extends ResourceController
 {
     protected $format = 'json';
+    /** Default per_page jika klien tidak mengirim. */
+    protected int $defaultPerPage = 20;
+
+    /** Cap maksimum per_page. */
+    protected int $maxPerPage = 100;
 
     public function initController(
         RequestInterface $request,
@@ -50,9 +55,22 @@ class ApiController extends ResourceController
      */
     protected function getPaginationRequest(): PaginationRequest
     {
+        $rawPage    = $this->request->getGet('page');
+        $rawPerPage = $this->request->getGet('per_page');
+
+        $page    = $rawPage === null
+            ? 1
+            : max(1, (int) $rawPage);
+
+        $perPage = $rawPerPage === null
+            ? $this->defaultPerPage
+            : (int) $rawPerPage;
+
+        $perPage = min(max($perPage, 1), $this->maxPerPage);
+
         return PaginationRequest::fromArray([
-            'page'     => $this->request->getGet('page'),
-            'per_page' => $this->request->getGet('per_page'),
+            'page'     => $page,
+            'per_page' => $perPage,
         ]);
     }
 
@@ -92,7 +110,6 @@ class ApiController extends ResourceController
         array $meta = []
     ): ResponseInterface {
         $payload = [
-            'status'  => 'success',
             'error'   => false,
             'message' => $message,
             'data'    => $data,
@@ -122,7 +139,6 @@ class ApiController extends ResourceController
         );
 
         $payload = [
-            'status'  => 'error',
             'error'   => true,
             'code'    => $errorCode,
             'message' => $message,
@@ -166,22 +182,26 @@ class ApiController extends ResourceController
         mixed $errors = null,
         ApiErrorCode|string|null $errorCode = null
     ): ResponseInterface {
-        $resolvedMessage = is_array($message)
-            ? (string) (reset($message) ?: 'Error')
-            : $message;
-
-        $resolvedErrors = $errors ?? (is_array($message) ? $message : null);
+        if (is_array($message)) {
+            $errors  = $errors ?? $message;
+            $message = 'Validasi gagal.';
+        }
 
         $resolvedCode = $errorCode ?? match ($code) {
             400     => ApiErrorCode::BAD_REQUEST,
             401     => ApiErrorCode::UNAUTHENTICATED,
             403     => ApiErrorCode::FORBIDDEN,
             404     => ApiErrorCode::NOT_FOUND,
+            405     => ApiErrorCode::METHOD_NOT_ALLOWED,
             409     => ApiErrorCode::CONFLICT,
             410     => ApiErrorCode::GONE,
+            413     => ApiErrorCode::PAYLOAD_TOO_LARGE,
+            415     => ApiErrorCode::UNSUPPORTED_MEDIA_TYPE,
             422     => ApiErrorCode::VALIDATION_ERROR,
             429     => ApiErrorCode::TOO_MANY_REQUESTS,
+            502     => ApiErrorCode::BAD_GATEWAY,
             503     => ApiErrorCode::SERVICE_UNAVAILABLE,
+            504     => ApiErrorCode::GATEWAY_TIMEOUT,
             default => $code >= 500
                 ? ApiErrorCode::INTERNAL_SERVER_ERROR
                 : ApiErrorCode::DOMAIN_ERROR,
@@ -189,9 +209,9 @@ class ApiController extends ResourceController
 
         return $this->jsonError(
             code: $resolvedCode,
-            message: $resolvedMessage,
+            message: $message,
             status: $code,
-            errors: $resolvedErrors
+            errors: $errors
         );
     }
 
@@ -270,7 +290,7 @@ class ApiController extends ResourceController
         }
 
         // 2. Exception validasi CodeIgniter & PHP global.
-        if ($e instanceof CIInvalidArgumentException || $e instanceof \InvalidArgumentException) {
+        if ($e instanceof \InvalidArgumentException) {
             return $this->jsonError(
                 ApiErrorCode::VALIDATION_ERROR,
                 $e->getMessage()
@@ -294,11 +314,7 @@ class ApiController extends ResourceController
         // 4. Kesalahan tak terduga.
         log_message(
             'error',
-            '[API ERROR] {class}: {message}',
-            [
-                'class'   => $e::class,
-                'message' => $e->getMessage(),
-            ]
+            '[API ERROR] ' . $e::class . ': ' . $e->getMessage()
         );
 
         return $this->jsonError(

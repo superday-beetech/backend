@@ -158,8 +158,8 @@ final class RbacFilter implements FilterInterface
 
         if ($arguments !== []) {
             $permissions = array_values(array_filter(
-                array_map(static fn($a): string => strtolower(trim((string) $a)), $arguments),
-                static fn(string $p): bool => $p !== '' && str_contains($p, '.')
+                array_map(static fn ($a): string => strtolower(trim((string) $a)), $arguments),
+                static fn (string $p): bool => $p !== '' && str_contains($p, '.')
             ));
         } else {
             $derived = $this->resolvePermission($cfg, $method, $path);
@@ -210,7 +210,7 @@ final class RbacFilter implements FilterInterface
         }
 
         $segments = explode('/', $path);
-        $safe     = static fn(?string $s): bool => $s !== null && preg_match('/^[a-z0-9_-]+$/', $s) === 1;
+        $safe     = static fn (?string $s): bool => $s !== null && preg_match('/^[a-z0-9_-]+$/', $s) === 1;
 
         // api/v1/{module}/{resource}[/{id}]
         if ($segments[0] === trim(config(AuthPolicy::class)->apiPrefix, '/')) {
@@ -378,7 +378,7 @@ final class RbacFilter implements FilterInterface
             ->setStatusCode($status)
             ->setHeader('Cache-Control', 'no-store');
 
-                if ($this->wantsJson($request, $cfg)) {
+        if ($this->wantsJson($request, $cfg)) {
             $body = ['status' => false, 'message' => $message];
 
             // Detail hanya di non-production untuk memudahkan debugging.
