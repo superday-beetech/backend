@@ -15,14 +15,19 @@ use Throwable;
 class OrganizationService
 {
     private BaseConnection $db;
+    private OrganizationModel $organizations;
+    private OrganizationMembershipModel $memberships;
     private OrganizationUnitModel $units;
+
     public function __construct(
-        private readonly OrganizationModel $organizations = new OrganizationModel(),
-        private readonly OrganizationMembershipModel $memberships = new OrganizationMembershipModel(),
+        ?OrganizationModel $organizations = null,
+        ?OrganizationMembershipModel $memberships = null,
         ?OrganizationUnitModel $units = null,
     ) {
         $this->db = Database::connect();
-        $this->units = $units ?? new OrganizationUnitModel();
+        $this->organizations = $organizations ?? new OrganizationModel($this->db);
+        $this->memberships = $memberships ?? new OrganizationMembershipModel($this->db);
+        $this->units = $units ?? new OrganizationUnitModel($this->db);
     }
 
     public function findActive(int $organizationId): ?array
@@ -83,9 +88,6 @@ class OrganizationService
         $this->db->transBegin();
 
         try {
-            // Pastikan seluruh model menggunakan koneksi transaksi.
-            // $this->organizations->setConnection($this->db);
-            // $this->memberships->setConnection($this->db);
 
             $organizationId = $this->organizations->insert(
                 $organizationData,
@@ -142,9 +144,9 @@ class OrganizationService
             throw new RuntimeException('Organisasi tidak ditemukan atau tidak dapat diakses.');
         }
 
-        /* if (!in_array($membership['membership_role'], ['superadmin', 'owner', 'admin'], true)) {
+        if (!in_array($membership['membership_role'], ['owner', 'admin'], true)) {
             throw new RuntimeException('Tidak memiliki kewenangan mengubah organisasi.');
-        } */
+        }
 
         $allowed = [
             'name',
@@ -359,9 +361,21 @@ class OrganizationService
             );
         }
 
-        $hasMembership = $this->memberships
-            ->where('unit_id', $unitId)
-            ->where('status', 'active')
+        // Pivot adalah relasi utama; unit_id tetap dibaca untuk data legacy
+        // yang belum memiliki baris pada core_organization_membership_units.
+        $hasMembership = $this->db
+            ->table('core_organization_memberships m')
+            ->join(
+                'core_organization_membership_units mu',
+                'mu.membership_id = m.id AND mu.organization_id = m.organization_id',
+                'left'
+            )
+            ->where('m.organization_id', $organizationId)
+            ->where('m.status', 'active')
+            ->groupStart()
+                ->where('m.unit_id', $unitId)
+                ->orWhere('mu.organization_unit_id', $unitId)
+            ->groupEnd()
             ->countAllResults() > 0;
 
         if ($hasMembership) {

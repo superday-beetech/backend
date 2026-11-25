@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Modules\Logistic\Models;
+namespace Modules\Logistics\Models;
 
 use Modules\Master\Models\MasterModel;
 

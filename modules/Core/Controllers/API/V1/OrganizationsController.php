@@ -327,14 +327,14 @@ class OrganizationsController extends ApiController
             );
         }
 
-        // Permission organisasi: owner atau admin.
-        /* if (! $this->organizationService->userCanManage($userId, $id)) {
+        // Hanya owner atau admin organisasi yang boleh mengubah profil organisasi.
+        if (! $this->organizationService->userCanManage($userId, $id)) {
             return $this->errorResponse(
                 'FORBIDDEN',
                 'Hanya owner atau admin yang dapat mengubah organisasi.',
                 403
             );
-        } */
+        }
 
         $input = $this->request->getJSON(true);
 

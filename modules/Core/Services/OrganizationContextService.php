@@ -40,8 +40,8 @@ class OrganizationContextService
                 'o.organization_type',
                 'o.timezone',
                 'o.currency',
-                'mu.organization_unit_id AS unit_id',
-                'mu.is_default AS unit_is_default',
+                'COALESCE(mu.organization_unit_id, m.unit_id) AS unit_id',
+                'COALESCE(mu.is_default, 1) AS unit_is_default',
                 'ou.code AS unit_code',
                 'ou.name AS unit_name',
                 'ou.unit_type',
@@ -53,12 +53,12 @@ class OrganizationContextService
             )
             ->join(
                 'core_organization_membership_units mu',
-                'mu.membership_id = m.id',
+                'mu.membership_id = m.id AND mu.organization_id = m.organization_id',
                 'left'
             )
             ->join(
                 'core_organization_units ou',
-                'ou.id = mu.organization_unit_id'
+                'ou.id = COALESCE(mu.organization_unit_id, m.unit_id)'
                     . ' AND ou.organization_id = m.organization_id'
                     . ' AND ou.status = "active"'
                     . ' AND ou.deleted_at IS NULL',

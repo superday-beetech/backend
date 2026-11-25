@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Modules\Logistic\Controllers\API\V1;
+namespace Modules\Logistics\Controllers\API\V1;
 
 use App\Core\ApiController;
 use CodeIgniter\HTTP\ResponseInterface;
 use InvalidArgumentException;
-use Modules\Logistic\Services\DeliveryService;
+use Modules\Logistics\Services\DeliveryService;
 use Throwable;
 
 class DeliveryApiController extends ApiController

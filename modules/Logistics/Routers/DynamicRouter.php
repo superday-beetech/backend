@@ -2,20 +2,19 @@
 
 declare(strict_types=1);
 
-namespace Modules\Distribution\Routers;
+namespace Modules\Logistics\Routers;
 
 use App\Libraries\DynamicRouterBase;
 
 class DynamicRouter extends DynamicRouterBase
 {
-    protected string $moduleFolder = 'Distribution';
+    protected string $moduleFolder = 'Logistics';
 
-    protected string $moduleNamespace = 'Modules\\Distribution\\Controllers\\API\\V1';
+    protected string $moduleNamespace = 'Modules\\Logistics\\Controllers\\API\\V1';
 
-    protected string $defaultController = 'DistributionApiController';
+    protected string $defaultController = 'DeliveryApiController';
 
     protected array $requiredRoles = [];
 
     protected array $requiredPermissions = [];
-
 }

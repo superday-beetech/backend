@@ -37,4 +37,16 @@ class OrganizationModel extends Model
         'timezone'          => 'required|max_length[64]',
         'currency'          => 'required|exact_length[3]',
     ];
+
+    /**
+     * Daftar seluruh organisasi aktif.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getActiveOrganizations(): array
+    {
+        return $this->where('status', 'active')
+            ->orderBy('name', 'ASC')
+            ->findAll();
+    }
 }

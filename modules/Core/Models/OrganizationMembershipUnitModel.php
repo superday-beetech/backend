@@ -19,12 +19,14 @@ class OrganizationMembershipUnitModel extends Model
     protected $updatedField = 'updated_at';
 
     protected $allowedFields = [
+        'organization_id',
         'membership_id',
         'organization_unit_id',
         'is_default',
     ];
 
     protected $validationRules = [
+        'organization_id'      => 'required|is_natural_no_zero',
         'membership_id'        => 'required|is_natural_no_zero',
         'organization_unit_id' => 'required|is_natural_no_zero',
         'is_default'            => 'permit_empty|in_list[0,1]',
