@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\Core\Exceptions;
 
-use App\Enums\ApiErrorCode;
+use App\Enum\ApiErrorCode;
 use RuntimeException;
 use Throwable;
 
