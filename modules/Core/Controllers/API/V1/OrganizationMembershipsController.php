@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Modules\Core\Controllers\API\V1;
 
 use App\Core\ApiController;
+use App\Libraries\Pagination\PaginationRequest;
 use CodeIgniter\HTTP\ResponseInterface;
 use InvalidArgumentException;
+use Modules\Core\Services\OrganizationContextService;
 use Modules\Core\Services\OrganizationMembershipService;
 use RuntimeException;
 use Throwable;
@@ -14,10 +16,12 @@ use Throwable;
 class OrganizationMembershipsController extends ApiController
 {
     private OrganizationMembershipService $membershipService;
+    private OrganizationContextService $contextService;
 
     public function __construct()
     {
         $this->membershipService = new OrganizationMembershipService();
+        $this->contextService = new OrganizationContextService();
     }
 
     /**
@@ -25,8 +29,10 @@ class OrganizationMembershipsController extends ApiController
      */
     public function index(): ResponseInterface
     {
-        if (($auth = $this->getUserId()) instanceof ResponseInterface) {
-            return $auth;
+        $userId = $this->getUserId();
+
+        if ($userId instanceof ResponseInterface) {
+            return $userId;
         }
 
         $organizationId = $this->validId(
@@ -35,26 +41,25 @@ class OrganizationMembershipsController extends ApiController
 
         if ($organizationId === null) {
             return $this->jsonError(
-                'NOT_FOUND',
+                'VALIDATION_ERROR',
                 'Organization ID wajib diisi.',
                 422
             );
         }
 
+        if ($error = $this->requireActiveOrganization($userId, $organizationId)) {
+            return $error;
+        }
+
         try {
-            $page = max(1, (int) ($this->request->getGet('page') ?? 1));
-            $perPage = min(
-                100,
-                max(1, (int) ($this->request->getGet('per_page') ?? 10))
-            );
+            $pagination = $this->getPaginationRequest();
 
             $search = $this->request->getGet('q');
             $status = $this->request->getGet('status');
 
             $result = $this->membershipService->listForOrganization(
                 $organizationId,
-                $page,
-                $perPage,
+                $pagination,
                 $search !== null ? (string) $search : null,
                 $status !== null ? (string) $status : null
             );
@@ -73,9 +78,10 @@ class OrganizationMembershipsController extends ApiController
      */
     public function show($id = null): ResponseInterface
     {
+        $userId = $this->getUserId();
 
-        if (($auth = $this->getUserId()) instanceof ResponseInterface) {
-            return $auth;
+        if ($userId instanceof ResponseInterface) {
+            return $userId;
         }
 
         $membershipId = $this->validId($id);
@@ -89,6 +95,10 @@ class OrganizationMembershipsController extends ApiController
                 'Membership ID dan Organization ID wajib valid.',
                 422
             );
+        }
+
+        if ($error = $this->requireActiveOrganization($userId, $organizationId)) {
+            return $error;
         }
 
         try {
@@ -116,20 +126,13 @@ class OrganizationMembershipsController extends ApiController
 
     /**
      * POST /organization-memberships
-     *
-     * Body:
-     * {
-     *   "organization_id": 1,
-     *   "user_id": 5,
-     *   "membership_role": "member",
-     *   "unit_ids": [1, 2],
-     *   "default_unit_id": 1
-     * }
      */
     public function create(): ResponseInterface
     {
-        if (($auth = $this->getUserId()) instanceof ResponseInterface) {
-            return $auth;
+        $userId = $this->getUserId();
+
+        if ($userId instanceof ResponseInterface) {
+            return $userId;
         }
 
         $data = $this->getRequestData();
@@ -152,6 +155,10 @@ class OrganizationMembershipsController extends ApiController
                 'Organization ID wajib diisi.',
                 422
             );
+        }
+
+        if ($error = $this->requireActiveOrganization($userId, $organizationId)) {
+            return $error;
         }
 
         try {
@@ -177,19 +184,13 @@ class OrganizationMembershipsController extends ApiController
 
     /**
      * PUT/PATCH /organization-memberships/{id}
-     *
-     * Body:
-     * {
-     *   "organization_id": 1,
-     *   "membership_role": "manager",
-     *   "unit_ids": [1, 2],
-     *   "default_unit_id": 2
-     * }
      */
     public function update($id = null): ResponseInterface
     {
-        if (($auth = $this->getUserId()) instanceof ResponseInterface) {
-            return $auth;
+        $userId = $this->getUserId();
+
+        if ($userId instanceof ResponseInterface) {
+            return $userId;
         }
 
         $membershipId = $this->validId($id);
@@ -223,6 +224,10 @@ class OrganizationMembershipsController extends ApiController
             );
         }
 
+        if ($error = $this->requireActiveOrganization($userId, $organizationId)) {
+            return $error;
+        }
+
         try {
             $this->membershipService->update(
                 $organizationId,
@@ -249,8 +254,10 @@ class OrganizationMembershipsController extends ApiController
      */
     public function delete($id = null): ResponseInterface
     {
-        if (($auth = $this->getUserId()) instanceof ResponseInterface) {
-            return $auth;
+        $userId = $this->getUserId();
+
+        if ($userId instanceof ResponseInterface) {
+            return $userId;
         }
 
         $membershipId = $this->validId($id);
@@ -264,6 +271,10 @@ class OrganizationMembershipsController extends ApiController
                 'Membership ID dan Organization ID wajib valid.',
                 422
             );
+        }
+
+        if ($error = $this->requireActiveOrganization($userId, $organizationId)) {
+            return $error;
         }
 
         try {
@@ -286,22 +297,23 @@ class OrganizationMembershipsController extends ApiController
      */
     public function indexUsers(): ResponseInterface
     {
-        if (($auth = $this->getUserId()) instanceof ResponseInterface) {
-            return $auth;
+        $userId = $this->getUserId();
+
+        if ($userId instanceof ResponseInterface) {
+            return $userId;
+        }
+
+        if ($error = $this->requireActiveOrganization($userId)) {
+            return $error;
         }
 
         try {
-            $page = max(1, (int) ($this->request->getGet('page') ?? 1));
-            $perPage = min(
-                100,
-                max(1, (int) ($this->request->getGet('per_page') ?? 10))
-            );
+            $pagination = $this->getPaginationRequest();
 
             $search = $this->request->getGet('q');
 
             $result = $this->membershipService->listUsers(
-                $page,
-                $perPage,
+                $pagination,
                 $search !== null ? (string) $search : null
             );
 
@@ -311,6 +323,56 @@ class OrganizationMembershipsController extends ApiController
             );
         } catch (Throwable $e) {
             return $this->handleMembershipException($e);
+        }
+    }
+
+    /**
+     * Memastikan request berada pada organisasi aktif.
+     *
+     * Jika organizationId null, hanya memastikan konteks tersedia.
+     */
+    private function requireActiveOrganization(
+        int $userId,
+        ?int $organizationId = null
+    ): ?ResponseInterface {
+        try {
+            $context = $this->contextService->getCurrentContext($userId);
+
+            if (
+                $context === null
+                || empty($context['organization']['id'])
+            ) {
+                return $this->jsonError(
+                    'ORGANIZATION_CONTEXT_REQUIRED',
+                    'Pilih organisasi aktif terlebih dahulu.',
+                    409
+                );
+            }
+
+            if (
+                $organizationId !== null
+                && (int) $context['organization']['id'] !== $organizationId
+            ) {
+                return $this->jsonError(
+                    'ORGANIZATION_CONTEXT_MISMATCH',
+                    'Organisasi request tidak sesuai dengan organisasi aktif.',
+                    409
+                );
+            }
+
+            return null;
+        } catch (Throwable $e) {
+            log_message(
+                'error',
+                '[OrganizationMembershipsController] Context validation failed: {message}',
+                ['message' => $e->getMessage()]
+            );
+
+            return $this->jsonError(
+                'ORGANIZATION_CONTEXT_UNAVAILABLE',
+                'Konteks organisasi tidak dapat divalidasi.',
+                503
+            );
         }
     }
 
@@ -331,15 +393,10 @@ class OrganizationMembershipsController extends ApiController
         if ($e instanceof RuntimeException) {
             $message = strtolower($e->getMessage());
 
-            if (str_contains($message, 'tidak ditemukan')) {
-                return $this->jsonError(
-                    'NOT_FOUND',
-                    $e->getMessage(),
-                    404
-                );
-            }
-
-            if (str_contains($message, 'tidak aktif')) {
+            if (
+                str_contains($message, 'tidak ditemukan')
+                || str_contains($message, 'tidak aktif')
+            ) {
                 return $this->jsonError(
                     'NOT_FOUND',
                     $e->getMessage(),
