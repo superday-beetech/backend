@@ -367,7 +367,7 @@ class OrganizationService
             ->table('core_organization_memberships m')
             ->join(
                 'core_organization_membership_units mu',
-                'mu.membership_id = m.id',
+                'mu.membership_id = m.id AND mu.organization_id = m.organization_id',
                 'left'
             )
             ->where('m.organization_id', $organizationId)
