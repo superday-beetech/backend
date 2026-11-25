@@ -1,6 +1,6 @@
 PS C:\laragon\www\cakra> php spark routes
 
-CodeIgniter v4.7.5 Command Line Tool - Server Time: 2026-11-25 21:24:50 UTC+07:00
+CodeIgniter v4.7.5 Command Line Tool - Server Time: 2026-11-25 22:11:58 UTC+07:00
 
 +--------+-------------------------------------------------------------------------------------------------+------+---------------------------------------------------------------------------+------------------------+--------------------+
 | Method | Route                                                                                           | Name | Handler                                                                   | Before Filters         | After Filters      |
