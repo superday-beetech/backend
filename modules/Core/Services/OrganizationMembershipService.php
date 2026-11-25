@@ -666,25 +666,31 @@ class OrganizationMembershipService
         int $organizationId
     ): array {
         return $this->db->table(
-            'core_organization_membership_units mu'
+            'core_organization_memberships m'
         )
             ->select([
                 'ou.id',
                 'ou.code',
                 'ou.name',
                 'ou.unit_type',
-                'mu.is_default',
+                'COALESCE(mu.is_default, 1) AS is_default',
             ])
             ->join(
+                'core_organization_membership_units mu',
+                'mu.membership_id = m.id',
+                'left'
+            )
+            ->join(
                 'core_organization_units ou',
-                'ou.id = mu.organization_unit_id',
+                'ou.id = COALESCE(mu.organization_unit_id, m.unit_id)',
                 'inner'
             )
-            ->where('mu.membership_id', $membershipId)
+            ->where('m.id', $membershipId)
+            ->where('m.organization_id', $organizationId)
             ->where('ou.organization_id', $organizationId)
             ->where('ou.status', 'active')
             ->where('ou.deleted_at', null)
-            ->orderBy('mu.is_default', 'DESC')
+            ->orderBy('is_default', 'DESC')
             ->orderBy('ou.name', 'ASC')
             ->get()
             ->getResultArray();
