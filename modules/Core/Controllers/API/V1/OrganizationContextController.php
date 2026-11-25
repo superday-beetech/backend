@@ -20,9 +20,9 @@ class OrganizationContextController extends ApiController
         $this->contextService = new OrganizationContextService();
     }
 
-    public function index()
+    public function index(): ResponseInterface
     {
-        return true;
+        return $this->indexContext();
     }
 
     /**
