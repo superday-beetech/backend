@@ -82,6 +82,7 @@ final class CreateCoreOrganizationTables extends Migration
         $this->db->query(
             "CREATE TABLE IF NOT EXISTS core_organization_membership_units (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                organization_id BIGINT UNSIGNED NOT NULL,
                 membership_id BIGINT UNSIGNED NOT NULL,
                 organization_unit_id BIGINT UNSIGNED NOT NULL,
                 is_default TINYINT(1) NOT NULL DEFAULT 0,
