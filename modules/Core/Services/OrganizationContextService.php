@@ -53,7 +53,8 @@ class OrganizationContextService
             )
             ->join(
                 'core_organization_membership_units mu',
-                'mu.membership_id = m.id',
+                'mu.membership_id = m.id'
+                . ' AND mu.organization_id = m.organization_id',
                 'left'
             )
             ->join(
@@ -210,33 +211,44 @@ class OrganizationContextService
      */
     public function getCurrentContext(int $userId): ?array
     {
+        if ($userId <= 0) {
+            $this->clearContext();
+            return null;
+        }
+
         $sessionContext = session()->get(self::SESSION_KEY);
 
         if (
             !is_array($sessionContext)
             || empty($sessionContext['organization_id'])
+            || empty($sessionContext['membership_id'])
         ) {
             return null;
         }
 
         $organizationId = (int) $sessionContext['organization_id'];
+
         $unitId = isset($sessionContext['unit_id'])
             ? (int) $sessionContext['unit_id']
             : null;
 
-        $context = $this->loadOrganizationContext(
-            $userId,
-            $organizationId,
-            $unitId
-        );
+        try {
+            $context = $this->loadOrganizationContext(
+                $userId,
+                $organizationId,
+                $unitId
+            );
+        } catch (InvalidArgumentException $e) {
+            $this->clearContext();
+            return null;
+        }
 
         if (
             $context === null
             || (int) $context['membership']['id']
-                !== (int) ($sessionContext['membership_id'] ?? 0)
+                !== (int) $sessionContext['membership_id']
         ) {
             $this->clearContext();
-
             return null;
         }
 
@@ -302,6 +314,7 @@ class OrganizationContextService
                 'ou.id = mu.organization_unit_id',
                 'inner'
             )
+            ->where('mu.organization_id', $organizationId)
             ->where('mu.membership_id', $membership['membership_id'])
             ->where('ou.organization_id', $organizationId)
             ->where('ou.status', 'active')
