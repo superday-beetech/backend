@@ -18,10 +18,10 @@ final class AddCoreOrganizationForeignKeys extends Migration
 {
     private const CONSTRAINTS = [
         'fk_core_units_organization',
-        'fk_core_units_parent',
+        'fk_core_units_parent_org',
         'fk_core_memberships_organization',
         'fk_core_memberships_user',
-        'fk_core_memberships_legacy_unit',
+        'fk_core_memberships_legacy_unit_org',
         'fk_core_membership_units_membership',
         'fk_core_membership_units_unit',
     ];
@@ -136,12 +136,19 @@ final class AddCoreOrganizationForeignKeys extends Migration
              ON DELETE RESTRICT ON UPDATE CASCADE'
         );
 
-        $this->addConstraint(
-            'fk_core_units_parent',
+        $this->addUniqueIndex(
+            'core_organization_units',
+            'uq_core_unit_org_id',
             'ALTER TABLE core_organization_units
-             ADD CONSTRAINT fk_core_units_parent
-             FOREIGN KEY (parent_id)
-             REFERENCES core_organization_units (id)
+             ADD UNIQUE KEY uq_core_unit_org_id (organization_id, id)'
+        );
+
+        $this->addConstraint(
+            'fk_core_units_parent_org',
+            'ALTER TABLE core_organization_units
+             ADD CONSTRAINT fk_core_units_parent_org
+             FOREIGN KEY (organization_id, parent_id)
+             REFERENCES core_organization_units (organization_id, id)
              ON DELETE RESTRICT ON UPDATE CASCADE'
         );
 
@@ -164,12 +171,12 @@ final class AddCoreOrganizationForeignKeys extends Migration
         );
 
         $this->addConstraint(
-            'fk_core_memberships_legacy_unit',
+            'fk_core_memberships_legacy_unit_org',
             'ALTER TABLE core_organization_memberships
-             ADD CONSTRAINT fk_core_memberships_legacy_unit
-             FOREIGN KEY (unit_id)
-             REFERENCES core_organization_units (id)
-             ON DELETE SET NULL ON UPDATE CASCADE'
+             ADD CONSTRAINT fk_core_memberships_legacy_unit_org
+             FOREIGN KEY (organization_id, unit_id)
+             REFERENCES core_organization_units (organization_id, id)
+             ON DELETE RESTRICT ON UPDATE CASCADE'
         );
 
         $this->addConstraint(
@@ -203,7 +210,7 @@ final class AddCoreOrganizationForeignKeys extends Migration
         );
         $this->dropConstraint(
             'core_organization_memberships',
-            'fk_core_memberships_legacy_unit'
+            'fk_core_memberships_legacy_unit_org'
         );
         $this->dropConstraint(
             'core_organization_memberships',
@@ -215,12 +222,51 @@ final class AddCoreOrganizationForeignKeys extends Migration
         );
         $this->dropConstraint(
             'core_organization_units',
-            'fk_core_units_parent'
+            'fk_core_units_parent_org'
+        );
+        $this->dropUniqueIndex(
+            'core_organization_units',
+            'uq_core_unit_org_id'
         );
         $this->dropConstraint(
             'core_organization_units',
             'fk_core_units_organization'
         );
+    }
+
+
+    private function addUniqueIndex(string $table, string $name, string $sql): void
+    {
+        if ($this->indexExists($table, $name)) {
+            return;
+        }
+
+        $this->db->query($sql);
+    }
+
+    private function dropUniqueIndex(string $table, string $name): void
+    {
+        if (! $this->indexExists($table, $name)) {
+            return;
+        }
+
+        $this->db->query(
+            "ALTER TABLE {$table} DROP INDEX {$name}"
+        );
+    }
+
+    private function indexExists(string $table, string $name): bool
+    {
+        $row = $this->db->query(
+            'SELECT COUNT(*) AS total
+             FROM information_schema.STATISTICS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = ?
+               AND INDEX_NAME = ?',
+            [$table, $name]
+        )->getRowArray();
+
+        return (int) ($row['total'] ?? 0) > 0;
     }
 
     private function assertNoOrphans(string $sql, string $message): void
