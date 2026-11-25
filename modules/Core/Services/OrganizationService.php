@@ -359,9 +359,18 @@ class OrganizationService
             );
         }
 
-        $hasMembership = $this->memberships
-            ->where('unit_id', $unitId)
-            ->where('status', 'active')
+        // Membership dapat terhubung ke banyak unit melalui pivot.
+        // unit_id hanya menyimpan unit default untuk kompatibilitas lama.
+        $hasMembership = $this->db
+            ->table('core_organization_membership_units mu')
+            ->join(
+                'core_organization_memberships m',
+                'm.id = mu.membership_id',
+                'inner'
+            )
+            ->where('mu.organization_unit_id', $unitId)
+            ->where('m.organization_id', $organizationId)
+            ->where('m.status', 'active')
             ->countAllResults() > 0;
 
         if ($hasMembership) {
