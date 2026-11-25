@@ -16,16 +16,6 @@ use RuntimeException;
  */
 final class AddCoreOrganizationForeignKeys extends Migration
 {
-    private const CONSTRAINTS = [
-        'fk_core_units_organization',
-        'fk_core_units_parent_org',
-        'fk_core_memberships_organization',
-        'fk_core_memberships_user',
-        'fk_core_memberships_legacy_unit_org',
-        'fk_core_membership_units_membership',
-        'fk_core_membership_units_unit',
-    ];
-
     public function up(): void
     {
         $requiredTables = [
