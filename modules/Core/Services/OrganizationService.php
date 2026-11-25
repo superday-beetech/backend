@@ -23,6 +23,11 @@ class OrganizationService
     ) {
         $this->db = Database::connect();
         $this->units = $units ?? new OrganizationUnitModel();
+
+        // Semua model memakai koneksi yang sama dengan transaksi service.
+        $this->organizations->setConnection($this->db);
+        $this->memberships->setConnection($this->db);
+        $this->units->setConnection($this->db);
     }
 
     public function findActive(int $organizationId): ?array
