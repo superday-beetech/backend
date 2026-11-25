@@ -4,26 +4,19 @@ declare(strict_types=1);
 
 namespace Modules\Rbac\Models;
 
-use CodeIgniter\Model;
+use Modules\Core\Models\OrganizationUnitModel as CoreOrganizationUnitModel;
 
-class CoreOrganizationUnitModel extends Model
+/**
+ * Compatibility adapter for legacy Rbac consumers.
+ *
+ * @deprecated Use Modules\Core\Models\OrganizationUnitModel directly.
+ * Core owns the organization-unit domain and its persistence configuration.
+ */
+class CoreOrganizationUnitModel extends CoreOrganizationUnitModel
 {
-    protected $table            = 'core_organization_units';
-    protected $primaryKey       = 'id';
-    protected $returnType       = 'array';
-    protected $useTimestamps    = false;
-    protected $protectFields    = true;
-
-    protected $allowedFields = [
-        'organization_id',
-        'parent_id',
-        'code',
-        'name',
-        'unit_type',
-        'status',
-        'metadata',
-    ];
-
+    /**
+     * @deprecated Use the Core organization service APIs.
+     */
     public function getActiveByOrganization(int $organizationId): array
     {
         return $this->where('organization_id', $organizationId)
