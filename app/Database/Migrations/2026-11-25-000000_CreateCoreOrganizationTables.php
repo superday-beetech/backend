@@ -57,6 +57,7 @@ final class CreateCoreOrganizationTables extends Migration
                 UNIQUE KEY uq_core_unit_org_code (organization_id, code),
                 UNIQUE KEY uq_core_unit_org_id (organization_id, id),
                 KEY idx_core_unit_parent (parent_id),
+                KEY idx_core_unit_org_parent (organization_id, parent_id),
                 KEY idx_core_unit_org_status (organization_id, status)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
         );
@@ -75,7 +76,9 @@ final class CreateCoreOrganizationTables extends Migration
                 PRIMARY KEY (id),
                 UNIQUE KEY uq_core_org_user (organization_id, user_id),
                 KEY idx_core_membership_user_status (user_id, status),
-                KEY idx_core_membership_unit (unit_id)
+                KEY idx_core_membership_unit (unit_id),
+                KEY idx_core_membership_org_unit (organization_id, unit_id),
+                UNIQUE KEY uq_core_membership_org_id (organization_id, id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
         );
 
@@ -91,6 +94,8 @@ final class CreateCoreOrganizationTables extends Migration
                 PRIMARY KEY (id),
                 UNIQUE KEY uq_membership_unit (membership_id, organization_unit_id),
                 KEY idx_membership_units_unit (organization_unit_id),
+                KEY idx_membership_units_org_membership (organization_id, membership_id),
+                KEY idx_membership_units_org_unit (organization_id, organization_unit_id),
                 KEY idx_membership_units_default (membership_id, is_default)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
