@@ -1,3 +1,4 @@
+
 <?php
 
 declare(strict_types=1);
@@ -30,9 +31,20 @@ class Rbac extends BaseConfig
         'webhook/**',
     ];
 
-    /** Pemetaan path -> permission untuk route non-standar. */
+    /**
+     * Pemetaan path -> permission untuk route non-standar.
+     *
+     * Navigation dan Settings tidak memiliki segmen resource
+     * yang cukup untuk permission API otomatis.
+     */
     public array $overrides = [
-        // 'GET /' => self::AUTHENTICATED,
+        // Backend Navigation
+        'GET api/v1/navigation'  => 'backend.navigation.view',
+        'HEAD api/v1/navigation' => 'backend.navigation.view',
+
+        // Backend Settings
+        'GET api/v1/settings'  => 'backend.settings.view',
+        'HEAD api/v1/settings' => 'backend.settings.view',
     ];
 
     public int $maxPathLength = 2048;
