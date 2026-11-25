@@ -6,7 +6,7 @@ namespace Modules\Core\Controllers\API\V1;
 
 use App\Core\ApiController;
 use CodeIgniter\HTTP\ResponseInterface;
-use Modules\Core\Libraries\Pagination\Pagination;
+use App\Libraries\Pagination\Pagination;
 use Modules\Core\Models\OrganizationMembershipModel;
 use Modules\Core\Models\OrganizationModel;
 use Modules\Core\Services\OrganizationService;
