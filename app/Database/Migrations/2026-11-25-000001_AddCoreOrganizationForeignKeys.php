@@ -148,6 +148,31 @@ final class AddCoreOrganizationForeignKeys extends Migration
              MODIFY organization_id BIGINT UNSIGNED NOT NULL'
         );
 
+        $this->addIndex(
+            'core_organization_units',
+            'idx_core_unit_org_parent',
+            'ALTER TABLE core_organization_units
+             ADD KEY idx_core_unit_org_parent (organization_id, parent_id)'
+        );
+        $this->addIndex(
+            'core_organization_memberships',
+            'idx_core_membership_org_unit',
+            'ALTER TABLE core_organization_memberships
+             ADD KEY idx_core_membership_org_unit (organization_id, unit_id)'
+        );
+        $this->addIndex(
+            'core_organization_membership_units',
+            'idx_membership_units_org_membership',
+            'ALTER TABLE core_organization_membership_units
+             ADD KEY idx_membership_units_org_membership (organization_id, membership_id)'
+        );
+        $this->addIndex(
+            'core_organization_membership_units',
+            'idx_membership_units_org_unit',
+            'ALTER TABLE core_organization_membership_units
+             ADD KEY idx_membership_units_org_unit (organization_id, organization_unit_id)'
+        );
+
         $this->addUniqueIndex(
             'core_organization_memberships',
             'uq_core_membership_org_id',
@@ -277,6 +302,16 @@ final class AddCoreOrganizationForeignKeys extends Migration
         );
     }
 
+
+
+    private function addIndex(string $table, string $name, string $sql): void
+    {
+        if ($this->indexExists($table, $name)) {
+            return;
+        }
+
+        $this->db->query($sql);
+    }
 
     private function addUniqueIndex(string $table, string $name, string $sql): void
     {
