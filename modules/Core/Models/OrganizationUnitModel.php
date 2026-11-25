@@ -33,4 +33,21 @@ class OrganizationUnitModel extends Model
         'unit_type'       => 'required|max_length[50]',
         'status'          => 'required|in_list[active,inactive]',
     ];
+
+    /**
+     * Daftar unit aktif dalam satu organisasi.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getActiveByOrganization(int $organizationId): array
+    {
+        if ($organizationId <= 0) {
+            return [];
+        }
+
+        return $this->where('organization_id', $organizationId)
+            ->where('status', 'active')
+            ->orderBy('name', 'ASC')
+            ->findAll();
+    }
 }
