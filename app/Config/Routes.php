@@ -254,9 +254,9 @@ $routes->get('vite', 'Vite::index');
 $routes->get('acn', 'ErpSpaController::index', ['filter' => 'rbac']);
 $routes->get('acn/login', 'ErpSpaController::index', ['filter' => 'rbac']);
 $routes->get('acn/(:any)', 'ErpSpaController::index', ['filter' => 'rbac']);
-$routes->get('api/v1/navigation', 'ErpApiController::index', ['filter' => 'rbac']);
-$routes->get('api/v1/settings', 'ErpApiController::settings', ['filter' => 'rbac']);
-$routes->post('api/v1/settings', 'ErpApiController::settings', ['filter' => 'rbac']);
+$routes->get('api/v1/erp/navigation', 'ErpApiController::index', ['filter' => 'rbac']);
+$routes->get('api/v1/erp/settings', 'ErpApiController::settings', ['filter' => 'rbac']);
+$routes->post('api/v1/erp/settings', 'ErpApiController::settings', ['filter' => 'rbac']);
 $routes->get('uploads/products/(:segment)', 'FileController::productImage/$1');
 $routes->get('uploads/products/temp/(:segment)', 'FileController::tempImage/$1', ['filter' => 'rbac']);
 
