@@ -7,21 +7,10 @@ namespace Modules\Rbac\Models;
 use Modules\Core\Models\OrganizationModel as BaseOrganizationModel;
 
 /**
- * Compatibility adapter for legacy Rbac consumers.
+ * Compatibility adapter for legacy callers.
  *
- * @deprecated Use Modules\Core\Models\OrganizationModel directly.
- * Core owns the organization domain and its persistence configuration.
+ * @deprecated Use Modules\Core\Models\OrganizationModel.
  */
 class CoreOrganizationModel extends BaseOrganizationModel
 {
-    /**
-     * @deprecated Use the Core organization query/service APIs.
-     */
-    public function getActiveOrganizations(): array
-    {
-        return $this->where('status', 'active')
-            ->where('deleted_at', null)
-            ->orderBy('name', 'ASC')
-            ->findAll();
-    }
 }
