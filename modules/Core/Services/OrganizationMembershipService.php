@@ -210,6 +210,14 @@ class OrganizationMembershipService
         $this->db->transBegin();
 
         try {
+            // Default organization bersifat global per user, bukan per organisasi.
+            if ((int) $payload['is_default'] === 1) {
+                $this->db->table('core_organization_memberships')
+                    ->where('user_id', $payload['user_id'])
+                    ->set(['is_default' => 0])
+                    ->update();
+            }
+
             $membershipId = $this->memberships->insert($payload);
 
             if ($membershipId === false) {
@@ -307,9 +315,27 @@ class OrganizationMembershipService
             );
         }
 
+        $oldUserId = (int) $membership['user_id'];
+        $targetUserId = (int) ($payload['user_id'] ?? $oldUserId);
+
+        // Perpindahan user tidak otomatis membawa status default user lama.
+        if ($targetUserId !== $oldUserId && !array_key_exists('is_default', $payload)) {
+            $payload['is_default'] = 0;
+        }
+
+        $willBeDefault = (int) ($payload['is_default'] ?? $membership['is_default']) === 1;
+
         $this->db->transBegin();
 
         try {
+            if ($willBeDefault) {
+                $this->db->table('core_organization_memberships')
+                    ->where('user_id', $targetUserId)
+                    ->where('id !=', $membershipId)
+                    ->set(['is_default' => 0])
+                    ->update();
+            }
+
             if ($payload !== []) {
                 $updated = $this->memberships->update(
                     $membershipId,
@@ -369,7 +395,10 @@ class OrganizationMembershipService
 
         return $this->memberships->update(
             $membershipId,
-            ['status' => 'inactive']
+            [
+                'status' => 'inactive',
+                'is_default' => 0,
+            ]
         );
     }
 
