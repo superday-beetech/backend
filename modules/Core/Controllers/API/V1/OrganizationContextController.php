@@ -20,9 +20,9 @@ class OrganizationContextController extends ApiController
         $this->contextService = new OrganizationContextService();
     }
 
-    public function index()
+    public function index(): ResponseInterface
     {
-        return true;
+        return $this->indexContext();
     }
 
     /**
@@ -121,27 +121,70 @@ class OrganizationContextController extends ApiController
         $data = $this->getRequestData();
 
         $organizationId = $data['organization_id'] ?? null;
+        $unitId = $data['unit_id'] ?? null;
 
+        // Validasi organization_id harus integer positif.
         if (
-            ! is_numeric($organizationId)
-            || (int) $organizationId <= 0
+            !is_int($organizationId)
+            && !(
+                is_string($organizationId)
+                && ctype_digit($organizationId)
+            )
         ) {
             return $this->jsonError(
                 'VALIDATION_ERROR',
-                'Organization ID wajib diisi dengan nilai yang valid.',
+                'Organization ID harus berupa integer positif.',
                 422
             );
+        }
+
+        $organizationId = (int) $organizationId;
+
+        if ($organizationId <= 0) {
+            return $this->jsonError(
+                'VALIDATION_ERROR',
+                'Organization ID tidak valid.',
+                422
+            );
+        }
+
+        // unit_id bersifat opsional.
+        if ($unitId !== null) {
+            if (
+                !is_int($unitId)
+                && !(
+                    is_string($unitId)
+                    && ctype_digit($unitId)
+                )
+            ) {
+                return $this->jsonError(
+                    'VALIDATION_ERROR',
+                    'Unit ID harus berupa integer positif.',
+                    422
+                );
+            }
+
+            $unitId = (int) $unitId;
+
+            if ($unitId <= 0) {
+                return $this->jsonError(
+                    'VALIDATION_ERROR',
+                    'Unit ID tidak valid.',
+                    422
+                );
+            }
         }
 
         try {
             $context = $this->contextService->switchOrganization(
                 $userId,
-                (int) $organizationId
+                $organizationId,
+                $unitId
             );
 
             return $this->jsonSuccess(
                 $context,
-                'Organisasi aktif berhasil diganti.'
+                'Organisasi dan unit aktif berhasil diganti.'
             );
         } catch (InvalidArgumentException $e) {
             return $this->jsonError(
@@ -150,7 +193,10 @@ class OrganizationContextController extends ApiController
                 403
             );
         } catch (Throwable $e) {
-            log_message('error', '[Organization Switch] ' . $e->getMessage());
+            log_message(
+                'error',
+                '[Organization Switch] ' . $e->getMessage()
+            );
 
             return $this->jsonError(
                 'ORGANIZATION_SWITCH_FAILED',
