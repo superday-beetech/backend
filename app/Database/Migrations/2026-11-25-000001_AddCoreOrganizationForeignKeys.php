@@ -11,8 +11,8 @@ use RuntimeException;
  * Add referential integrity for the Core organization domain.
  *
  * Existing organization tables and indexes are already present in the
- * cakra schema. This migration adds only foreign keys; it does not recreate
- * tables, rewrite records, or change the existing unique indexes.
+ * cakra schema. This migration backfills an organization key on the
+ * membership-unit pivot and adds organization-scoped foreign keys.
  */
 final class AddCoreOrganizationForeignKeys extends Migration
 {
@@ -244,9 +244,11 @@ final class AddCoreOrganizationForeignKeys extends Migration
             'organization_id',
             'core_organization_membership_units'
         )) {
+            // Keep the additive column on rollback, but make it nullable so
+            // older application code can continue inserting pivot rows.
             $this->db->query(
                 'ALTER TABLE core_organization_membership_units
-                 DROP COLUMN organization_id'
+                 MODIFY organization_id BIGINT UNSIGNED NULL'
             );
         }
         $this->dropConstraint(
