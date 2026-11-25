@@ -14,6 +14,7 @@ use CodeIgniter\Filters\InvalidChars;
 use CodeIgniter\Filters\PageCache;
 use CodeIgniter\Filters\PerformanceMetrics;
 use CodeIgniter\Filters\SecureHeaders;
+use Modules\Core\Filters\OrganizationContextFilter;
 
 class Filters extends BaseFilters
 {
@@ -30,6 +31,7 @@ class Filters extends BaseFilters
         // 'csrf'          => CSRF::class,
         'csrf'          => ApiAwareCsrfFilter::class,
         'rbac'          => RbacFilter::class,
+        'organization-context' => OrganizationContextFilter::class,
         // 'toolbar'       => DebugToolbar::class,
         'honeypot'      => Honeypot::class,
         'invalidchars'  => InvalidChars::class,
