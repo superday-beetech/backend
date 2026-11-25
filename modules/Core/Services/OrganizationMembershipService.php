@@ -627,6 +627,7 @@ class OrganizationMembershipService
 
         foreach ($unitIds as $unitId) {
             $rows[] = [
+                'organization_id' => $organizationId,
                 'membership_id' => $membershipId,
                 'organization_unit_id' => $unitId,
                 'is_default' => $defaultUnitId === $unitId ? 1 : 0,
@@ -677,7 +678,7 @@ class OrganizationMembershipService
             ])
             ->join(
                 'core_organization_membership_units mu',
-                'mu.membership_id = m.id',
+                'mu.membership_id = m.id AND mu.organization_id = m.organization_id',
                 'left'
             )
             ->join(
